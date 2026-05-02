@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>回答者側 UI 図解 — 安否確認</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Noto Sans JP"', 'system-ui', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700&display=swap" rel="stylesheet" />
+</head>
+<body class="min-h-screen bg-slate-100 text-slate-900 antialiased">
+  <header class="border-b border-slate-200 bg-white px-4 py-6 shadow-sm">
+    <div class="mx-auto max-w-6xl">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">災害時安否確認 · 回答者側</p>
+      <h1 class="mt-1 text-2xl font-bold text-slate-800">UI 図解（Tailwind）</h1>
+      <p class="mt-2 max-w-3xl text-sm text-slate-600">
+        初期画面は氏名・部署なし。信号機レイアウト（左に緑・黄・赤の丸、選択肢エリアは白背景）。要救助は1タップ即送信、無事・軽症は確認、その他（コメント記入）はプレビュー後に送信。
+      </p>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-6xl px-4 py-10">
+    <!-- フロー図解 -->
+    <section class="mb-12 rounded-2xl border border-slate-200 bg-white p-6">
+      <h2 class="text-lg font-bold text-slate-800">画面遷移（概要）</h2>
+      <div class="mt-4 flex flex-col items-stretch gap-3 text-sm md:flex-row md:flex-wrap md:items-center md:justify-center">
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-center font-semibold text-slate-700">① 4択</div>
+        <span class="hidden text-slate-400 md:inline">→</span>
+        <div class="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center text-xs text-green-900 md:max-w-[10rem]">無事 / 軽症 → ② 確認 → 送信</div>
+        <span class="hidden text-slate-400 md:inline">→</span>
+        <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-center text-xs text-red-900 md:max-w-[10rem]">要救助 → 即送信 → 完了</div>
+        <span class="hidden text-slate-400 md:inline">→</span>
+        <div class="rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-center text-xs text-gray-800 md:max-w-[12rem]">その他（コメント記入）→ コメント → ③ プレビュー → 送信</div>
+        <span class="hidden text-slate-400 md:inline">→</span>
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-center font-semibold text-slate-700">完了</div>
+      </div>
+    </section>
+
+    <div class="grid gap-10 lg:grid-cols-2">
+      <!-- 画面1: 4択 -->
+      <section>
+        <h2 class="mb-3 text-sm font-bold text-slate-500">画面1 · 4択（即タップ）</h2>
+        <div class="mx-auto max-w-[22rem] overflow-hidden rounded-3xl border-4 border-slate-800 bg-white shadow-md">
+          <div class="bg-red-700 px-4 py-2 text-center text-xs font-semibold text-white">【緊急】安否確認</div>
+          <div class="px-4 pb-6 pt-4">
+            <p class="text-center text-sm font-medium text-slate-700">今の状況に最も近いものを<br />1つ選んでください。</p>
+            <div class="mt-5 space-y-3">
+              <button type="button" class="flex w-full min-h-[4.25rem] items-center gap-4 rounded-xl border-2 border-green-600 bg-white px-3 py-3 text-left text-slate-900 shadow-sm transition hover:bg-green-50 active:scale-[0.99]">
+                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                  <span class="h-9 w-9 rounded-full bg-green-500 shadow-inner ring-2 ring-green-700/40"></span>
+                </span>
+                <span class="text-lg font-bold leading-tight">無事</span>
+              </button>
+              <button type="button" class="flex w-full min-h-[4.25rem] items-center gap-4 rounded-xl border-2 border-amber-500 bg-white px-3 py-3 text-left text-slate-900 shadow-sm transition hover:bg-amber-50 active:scale-[0.99]">
+                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                  <span class="h-9 w-9 rounded-full bg-amber-400 shadow-inner ring-2 ring-amber-600/50"></span>
+                </span>
+                <span class="text-base font-bold leading-tight">軽症<span class="block text-xs font-semibold text-slate-700">（自力で解決可）</span></span>
+              </button>
+              <button type="button" class="flex w-full min-h-[5rem] items-center gap-4 rounded-xl border-2 border-red-600 bg-white px-3 py-3 text-left text-slate-900 shadow-sm transition hover:bg-red-50 active:scale-[0.99]">
+                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                  <span class="h-9 w-9 rounded-full bg-red-600 shadow-inner ring-2 ring-red-800/40"></span>
+                </span>
+                <span class="text-base font-bold leading-tight">要救助<span class="mt-0.5 block text-xs font-semibold text-red-700">直ちに救援を求めます</span></span>
+              </button>
+              <button type="button" class="flex w-full min-h-[4.25rem] items-center gap-4 rounded-xl border-2 border-slate-400 bg-white px-3 py-3 text-left text-slate-900 shadow-sm transition hover:bg-slate-50 active:scale-[0.99]">
+                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                  <span class="h-9 w-9 rounded-full bg-slate-400 shadow-inner ring-2 ring-slate-500/40"></span>
+                </span>
+                <span class="text-base font-bold leading-tight">その他<span class="font-semibold text-slate-700">（コメント記入）</span></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 画面2: 無事・軽症 確認 -->
+      <section>
+        <h2 class="mb-3 text-sm font-bold text-slate-500">画面2 · 無事／軽症の確認</h2>
+        <div class="mx-auto max-w-[22rem] overflow-hidden rounded-3xl border-4 border-slate-800 bg-white shadow-md">
+          <div class="bg-slate-700 px-4 py-2 text-center text-xs font-semibold text-white">選択の確認</div>
+          <div class="px-4 pb-6 pt-5">
+            <div class="flex min-h-[4rem] items-center gap-4 rounded-xl border-2 border-amber-500 bg-white px-3 py-3 text-slate-900 shadow-sm">
+              <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                <span class="h-8 w-8 rounded-full bg-amber-400 shadow-inner ring-2 ring-amber-600/50"></span>
+              </span>
+              <span class="font-bold leading-tight">軽症<span class="block text-xs font-semibold text-slate-700">（自力で解決可）</span></span>
+            </div>
+            <div class="mt-6 space-y-3">
+              <button type="button" class="w-full rounded-xl bg-slate-800 py-4 text-base font-bold text-white hover:bg-slate-900">この内容で送信する</button>
+              <button type="button" class="w-full rounded-xl border-2 border-slate-300 bg-white py-4 text-base font-semibold text-slate-700 hover:bg-slate-50">選び直す</button>
+            </div>
+          </div>
+        </div>
+        <p class="mx-auto mt-2 max-w-[22rem] text-xs text-slate-500">無事を選んだ場合も同レイアウトで、白背景・緑枠・左に緑の丸・右に「無事」になる。</p>
+      </section>
+
+      <!-- 画面3: 要救助 送信中〜完了 -->
+      <section>
+        <h2 class="mb-3 text-sm font-bold text-slate-500">画面3 · 要救助（1タップ後）</h2>
+        <div class="mx-auto grid max-w-[22rem] gap-4">
+          <div class="overflow-hidden rounded-3xl border-4 border-slate-800 bg-white shadow-md">
+            <div class="bg-red-700 px-4 py-2 text-center text-xs font-semibold text-white">送信中</div>
+            <div class="flex min-h-[12rem] flex-col items-center justify-center px-4 py-8">
+              <div class="h-10 w-10 animate-pulse rounded-full bg-red-200"></div>
+              <p class="mt-4 text-center text-sm font-medium text-slate-700">要救助として送信中です…</p>
+            </div>
+          </div>
+          <div class="overflow-hidden rounded-3xl border-4 border-slate-800 bg-white shadow-md">
+            <div class="bg-green-700 px-4 py-2 text-center text-xs font-semibold text-white">完了</div>
+            <div class="px-4 py-8 text-center">
+              <p class="text-3xl font-bold text-green-700">送信しました</p>
+              <p class="mt-3 text-sm leading-relaxed text-slate-600">救援の手配に向け情報を届けました。状況が変わったら、運営の連絡に従ってください。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 画面4–5: その他 -->
+      <section>
+        <h2 class="mb-3 text-sm font-bold text-slate-500">画面4–5 · その他</h2>
+        <div class="mx-auto grid max-w-[22rem] gap-6">
+          <div class="overflow-hidden rounded-3xl border-4 border-slate-800 bg-white shadow-md">
+            <div class="bg-slate-600 px-4 py-2 text-center text-xs font-semibold text-white">その他（コメント記入）— 内容入力</div>
+            <div class="px-4 pb-5 pt-4">
+              <label class="block text-xs font-semibold text-slate-600">補足（必須にする場合はバリデーション）</label>
+              <textarea rows="4" readonly class="mt-2 w-full resize-none rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800" placeholder="例：出社不可。自宅で待機します。">出社不可。自宅で待機します。</textarea>
+              <button type="button" class="mt-4 w-full rounded-xl bg-slate-700 py-3 text-sm font-bold text-white">プレビューへ</button>
+            </div>
+          </div>
+          <div class="overflow-hidden rounded-3xl border-4 border-slate-800 bg-white shadow-md">
+            <div class="bg-slate-600 px-4 py-2 text-center text-xs font-semibold text-white">送信内容の確認</div>
+            <div class="px-4 pb-5 pt-4">
+              <p class="text-xs font-semibold text-slate-500">その他（コメント記入）／ 内容（1行プレビュー）</p>
+              <div class="mt-2 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800">出社不可。自宅で待機します。</div>
+              <button type="button" class="mt-5 w-full rounded-xl bg-slate-800 py-4 text-base font-bold text-white">送信する</button>
+              <button type="button" class="mt-2 w-full py-2 text-sm font-semibold text-slate-600 underline decoration-slate-400">戻って編集する</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="mt-12 border-t border-slate-200 pt-6 text-center text-xs text-slate-500">
+      静的図解 · 本番ではボタンに API 接続。README の「回答者側UI（確定仕様）」と対応。
+    </footer>
+  </main>
+</body>
+</html>

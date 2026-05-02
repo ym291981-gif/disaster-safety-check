@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理画面 UI 図解 — 安否確認</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Noto Sans JP"', 'system-ui', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700&display=swap" rel="stylesheet" />
+</head>
+<body class="min-h-screen bg-slate-100 text-slate-900 antialiased">
+  <header class="border-b border-slate-200 bg-white px-4 py-6 shadow-sm">
+    <div class="mx-auto max-w-6xl">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">災害時安否確認 · 管理者側</p>
+      <h1 class="mt-1 text-2xl font-bold text-slate-800">ダッシュボード・送信開始フロー図解（Tailwind）</h1>
+      <p class="mt-2 max-w-3xl text-sm text-slate-600">
+        年に数回の利用を想定し、ダッシュボードに開始入口を1つ置く。ワンクリック送信は避け、新規入力画面のあと<strong class="font-semibold text-slate-800">送信前に1回だけ確認</strong>する。ページ下部に、<strong class="font-semibold text-slate-800">全員回答済み後のダッシュボード</strong>の図解あり。静的図解のためボタンは動作しません。
+      </p>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-6xl px-4 py-10">
+    <!-- フロー帯 -->
+    <section class="mb-12 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 class="text-lg font-bold text-slate-800">画面遷移（概要）</h2>
+      <div class="mt-4 flex flex-col items-stretch gap-3 text-sm md:flex-row md:flex-wrap md:items-center md:justify-center">
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-center font-semibold text-slate-700">① ダッシュボード</div>
+        <span class="hidden text-slate-400 md:inline" aria-hidden="true">→</span>
+        <div class="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-center font-semibold text-indigo-900">② 新規入力</div>
+        <span class="hidden text-slate-400 md:inline" aria-hidden="true">→</span>
+        <div class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center font-semibold text-amber-900">③ 送信前の確認</div>
+        <span class="hidden text-slate-400 md:inline" aria-hidden="true">→</span>
+        <div class="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-center font-semibold text-green-900">④ 送信完了 → ①へ</div>
+      </div>
+      <p class="mt-3 text-center text-xs text-slate-500 md:text-left">
+        送信確定後は該当セッションを表示したダッシュボードに戻る想定。
+      </p>
+    </section>
+
+    <div class="grid gap-10 lg:grid-cols-1 xl:grid-cols-3">
+      <!-- ① ダッシュボード -->
+      <section class="xl:col-span-1">
+        <h2 class="mb-3 text-sm font-bold text-slate-500">① ダッシュボード（開始入口）</h2>
+        <div class="overflow-hidden rounded-2xl border-4 border-slate-800 bg-white shadow-md">
+          <div class="border-b border-slate-200 bg-slate-50 px-4 py-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="text-xs font-semibold text-slate-500">安否確認ダッシュボード</p>
+                <p class="text-sm font-bold text-slate-800">セッション: 未選択</p>
+              </div>
+              <p class="text-xs text-slate-500">最終更新 14:32</p>
+            </div>
+          </div>
+          <div class="px-4 py-4">
+            <button
+              type="button"
+              class="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-indigo-600 bg-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700"
+            >
+              <span class="text-lg leading-none">＋</span>
+              新規で安否確認を開始
+            </button>
+            <p class="mt-2 text-xs text-slate-500">押下で「新規安否確認の開始」画面へ遷移（図解）。</p>
+          </div>
+          <div class="grid grid-cols-2 gap-2 border-t border-slate-100 bg-slate-50/80 px-3 py-3 sm:grid-cols-4">
+            <div class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-center">
+              <p class="text-[10px] font-semibold text-slate-500">対象者</p>
+              <p class="text-lg font-bold text-slate-800">—</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-center">
+              <p class="text-[10px] font-semibold text-slate-500">回答済</p>
+              <p class="text-lg font-bold text-slate-800">—</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-center">
+              <p class="text-[10px] font-semibold text-slate-500">未回答</p>
+              <p class="text-lg font-bold text-slate-800">—</p>
+            </div>
+            <div class="rounded-lg border border-red-200 bg-red-50 px-2 py-2 text-center">
+              <p class="text-[10px] font-semibold text-red-700">要救護</p>
+              <p class="text-lg font-bold text-red-800">—</p>
+            </div>
+          </div>
+          <div class="px-4 py-3 text-center text-xs text-slate-400">（以下: 要救護一覧・未回答・グラフなど集計エリア）</div>
+        </div>
+      </section>
+
+      <!-- ② 新規入力 -->
+      <section class="xl:col-span-1">
+        <h2 class="mb-3 text-sm font-bold text-slate-500">② 新規安否確認の開始（入力）</h2>
+        <div class="overflow-hidden rounded-2xl border-4 border-slate-800 bg-white shadow-md">
+          <div class="flex items-center justify-between border-b border-slate-200 bg-indigo-700 px-4 py-2.5">
+            <p class="text-xs font-bold text-white">新規安否確認の開始</p>
+            <button type="button" class="text-xs font-semibold text-indigo-100 underline decoration-indigo-200 hover:text-white">戻る</button>
+          </div>
+          <div class="space-y-4 px-4 py-5">
+            <div>
+              <label class="block text-xs font-bold text-slate-600">タイトル</label>
+              <div class="mt-1.5 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800">2026年度 防災訓練 安否確認</div>
+              <p class="mt-1 text-[10px] text-slate-500">例: 本社一斉・第3回訓練 など</p>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-600">実施日（または対象日）</label>
+              <div class="mt-1.5 flex gap-2">
+                <div class="flex-1 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800">2026-05-02</div>
+                <span class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2 text-[10px] font-semibold text-slate-500">カレンダー</span>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-600">（任意）メモ・回答期限など</label>
+              <div class="mt-1.5 min-h-[4.5rem] rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">回答期限: 15:00 ／ 備考: …</div>
+            </div>
+            <div class="rounded-xl border border-slate-200 bg-slate-100 px-3 py-3">
+              <p class="text-xs font-semibold text-slate-600">送信対象（マスタより自動）</p>
+              <p class="mt-1 text-lg font-bold text-slate-800">1,240 名</p>
+            </div>
+            <button
+              type="button"
+              class="w-full rounded-xl bg-indigo-600 py-3.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-700"
+            >
+              この内容で送信開始（次へ進む）
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ③ 最終確認 -->
+      <section class="xl:col-span-1">
+        <h2 class="mb-3 text-sm font-bold text-slate-500">③ 送信前の確認（1回）</h2>
+        <div class="overflow-hidden rounded-2xl border-4 border-slate-800 bg-white shadow-md">
+          <div class="flex items-center justify-between border-b border-slate-200 bg-amber-600 px-4 py-2.5">
+            <p class="text-xs font-bold text-white">送信前の確認</p>
+            <button type="button" class="text-xs font-semibold text-amber-100 underline decoration-amber-200 hover:text-white">戻る</button>
+          </div>
+          <div class="px-4 py-5">
+            <p class="text-sm font-medium text-slate-700">以下の内容で一斉通知を送ります。問題なければ送信してください。</p>
+            <dl class="mt-4 space-y-2 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/50 px-3 py-4 text-sm">
+              <div class="flex justify-between gap-2 border-b border-amber-200/80 pb-2">
+                <dt class="font-semibold text-slate-600">タイトル</dt>
+                <dd class="max-w-[60%] text-right font-medium text-slate-900">2026年度 防災訓練 安否確認</dd>
+              </div>
+              <div class="flex justify-between gap-2 border-b border-amber-200/80 pb-2">
+                <dt class="font-semibold text-slate-600">実施日</dt>
+                <dd class="font-medium text-slate-900">2026-05-02</dd>
+              </div>
+              <div class="flex justify-between gap-2 border-b border-amber-200/80 pb-2">
+                <dt class="font-semibold text-slate-600">回答期限</dt>
+                <dd class="font-medium text-slate-900">15:00</dd>
+              </div>
+              <div class="flex justify-between gap-2 border-b border-amber-200/80 pb-2">
+                <dt class="font-semibold text-slate-600">通知</dt>
+                <dd class="text-right font-medium text-slate-900">LINE・メール</dd>
+              </div>
+              <div class="flex justify-between gap-2 pt-1">
+                <dt class="font-semibold text-slate-600">送信対象</dt>
+                <dd class="text-lg font-bold text-amber-900">1,240 名</dd>
+              </div>
+            </dl>
+            <button
+              type="button"
+              class="mt-5 w-full rounded-xl bg-amber-600 py-4 text-base font-bold text-white shadow-sm hover:bg-amber-700"
+            >
+              1,240 名に送信する（確定）
+            </button>
+            <p class="mt-2 text-center text-xs text-slate-500">「戻る」で入力画面へ。確定後はダッシュボードへ。</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 送信完了後・全員回答済みのダッシュボード図解 -->
+    <section class="mt-12 space-y-4">
+      <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 class="text-lg font-bold text-slate-800">送信完了後のダッシュボード（全員回答済みの例）</h2>
+        <p class="mt-2 text-sm text-slate-600">
+          一斉送信後、時間が経ち<strong class="font-semibold text-slate-800">全員が回答したあと</strong>の画面イメージです。未回答は 0 名でも、要救護は「回答内容」として残るため一覧に表示されます（図解用のダミー数値）。
+        </p>
+      </div>
+
+      <div class="overflow-hidden rounded-2xl border-4 border-slate-800 bg-white shadow-lg">
+        <div class="border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
+          <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div>
+              <p class="text-xs font-semibold text-slate-500">安否確認ダッシュボード</p>
+              <p class="text-base font-bold text-slate-900">2026年度 防災訓練 安否確認</p>
+              <p class="mt-0.5 text-xs text-slate-500">実施日 2026-05-02 · 回答期限 15:00</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-800">未回答 0 名</span>
+              <p class="text-xs text-slate-500">最終更新 15:42</p>
+            </div>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 shadow-sm hover:bg-indigo-50"
+            >
+              <span>＋</span> 新規で安否確認を開始
+            </button>
+            <span class="self-center text-[10px] text-slate-400">（別セッション用。図解のため表示のみ）</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 border-b border-slate-100 bg-slate-50/90 px-3 py-4 sm:grid-cols-4 sm:px-6">
+          <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center shadow-sm">
+            <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">対象者</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">1,240</p>
+            <p class="text-[10px] text-slate-400">名</p>
+          </div>
+          <div class="rounded-xl border border-green-200 bg-green-50 px-3 py-3 text-center shadow-sm">
+            <p class="text-[10px] font-semibold text-green-800">回答済</p>
+            <p class="mt-1 text-2xl font-bold text-green-900">1,240</p>
+            <p class="text-[10px] font-semibold text-green-700">100%</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center shadow-sm">
+            <p class="text-[10px] font-semibold text-slate-500">未回答</p>
+            <p class="mt-1 text-2xl font-bold text-slate-700">0</p>
+            <p class="text-[10px] text-slate-400">0%</p>
+          </div>
+          <div class="rounded-xl border border-red-300 bg-red-50 px-3 py-3 text-center shadow-sm">
+            <p class="text-[10px] font-semibold text-red-800">要救護</p>
+            <p class="mt-1 text-2xl font-bold text-red-900">5</p>
+            <p class="text-[10px] text-red-600">要対応</p>
+          </div>
+        </div>
+
+        <div class="border-b border-slate-100 px-4 py-3 sm:px-6">
+          <p class="text-[10px] font-bold text-slate-500">凡例</p>
+          <div class="mt-2 flex flex-wrap gap-3 text-[10px] font-semibold text-slate-700">
+            <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full bg-green-500"></span>無事</span>
+            <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full bg-amber-400"></span>軽症</span>
+            <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full bg-red-600"></span>要救護</span>
+            <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full bg-slate-400"></span>その他</span>
+            <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full bg-slate-200 ring-1 ring-slate-300"></span>未回答</span>
+          </div>
+        </div>
+
+        <div class="grid gap-6 px-4 py-5 lg:grid-cols-2 lg:px-6">
+          <div>
+            <h3 class="text-xs font-bold text-red-800">要救護者（最優先）</h3>
+            <ul class="mt-2 space-y-2 rounded-xl border border-red-200 bg-red-50/40 p-2">
+              <li class="flex items-center justify-between gap-2 rounded-lg border border-red-100 bg-white px-3 py-2.5 text-sm">
+                <span class="font-semibold text-slate-900"><span class="text-red-600" aria-hidden="true">●</span> 山田 太郎 <span class="text-xs font-normal text-slate-500">営業一課</span></span>
+                <button type="button" class="shrink-0 text-xs font-bold text-indigo-600 underline">詳細</button>
+              </li>
+              <li class="flex items-center justify-between gap-2 rounded-lg border border-red-100 bg-white px-3 py-2.5 text-sm">
+                <span class="font-semibold text-slate-900"><span class="text-red-600" aria-hidden="true">●</span> 佐藤 花子 <span class="text-xs font-normal text-slate-500">物流センター</span></span>
+                <button type="button" class="shrink-0 text-xs font-bold text-indigo-600 underline">詳細</button>
+              </li>
+              <li class="flex items-center justify-between gap-2 rounded-lg border border-red-100 bg-white px-3 py-2.5 text-sm">
+                <span class="font-semibold text-slate-900"><span class="text-red-600" aria-hidden="true">●</span> … ほか 3 名</span>
+                <span class="text-[10px] text-slate-400">（図解省略）</span>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="text-xs font-bold text-slate-700">未回答者</h3>
+            <div class="mt-2 flex min-h-[8.5rem] flex-col items-center justify-center rounded-xl border-2 border-dashed border-green-200 bg-green-50/50 px-4 py-6 text-center">
+              <p class="text-2xl text-green-600" aria-hidden="true">✓</p>
+              <p class="mt-2 text-sm font-bold text-green-900">未回答はいません</p>
+              <p class="mt-1 text-xs text-green-800/90">全員より回答がありました。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid gap-6 border-t border-slate-100 bg-slate-50/50 px-4 py-6 lg:grid-cols-2 lg:px-6">
+          <div>
+            <h3 class="text-xs font-bold text-slate-700">回答内訳（円・概念図）</h3>
+            <p class="mt-1 text-[10px] text-slate-500">未回答 0 のため、円は回答済の内訳のみ。</p>
+            <div class="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:justify-center sm:gap-8">
+              <div
+                class="h-36 w-36 shrink-0 rounded-full border-4 border-white shadow-md ring-2 ring-slate-200"
+                style="background: conic-gradient(from -90deg, #22c55e 0 79.03%, #facc15 0 93.55%, #dc2626 0 93.95%, #94a3b8 0 100%)"
+                role="img"
+                aria-label="回答内訳: 無事約79%、軽症約15%、要救護0.4%、その他約6%"
+              ></div>
+              <ul class="w-full max-w-[14rem] space-y-1.5 text-xs">
+                <li class="flex justify-between border-b border-slate-200/80 py-1"><span class="text-slate-600">無事</span><span class="font-bold text-slate-900">980 名</span></li>
+                <li class="flex justify-between border-b border-slate-200/80 py-1"><span class="text-slate-600">軽症</span><span class="font-bold text-slate-900">180 名</span></li>
+                <li class="flex justify-between border-b border-slate-200/80 py-1"><span class="text-slate-600">要救護</span><span class="font-bold text-red-700">5 名</span></li>
+                <li class="flex justify-between py-1"><span class="text-slate-600">その他</span><span class="font-bold text-slate-900">75 名</span></li>
+              </ul>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-xs font-bold text-slate-700">部署別・回答率（棒グラフ）</h3>
+            <p class="mt-1 text-[10px] text-slate-500">全員回答済みのため各部署 100%。偏りがあった途中経過では棒の長さが変化。</p>
+            <div class="mt-4 space-y-3">
+              <div>
+                <div class="flex justify-between text-[10px] font-semibold text-slate-600"><span>開発部</span><span>100%</span></div>
+                <div class="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-200"><div class="h-full w-full rounded-full bg-indigo-500"></div></div>
+              </div>
+              <div>
+                <div class="flex justify-between text-[10px] font-semibold text-slate-600"><span>営業一課</span><span>100%</span></div>
+                <div class="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-200"><div class="h-full w-full rounded-full bg-indigo-500"></div></div>
+              </div>
+              <div>
+                <div class="flex justify-between text-[10px] font-semibold text-slate-600"><span>物流センター</span><span>100%</span></div>
+                <div class="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-200"><div class="h-full w-full rounded-full bg-indigo-500"></div></div>
+              </div>
+              <div>
+                <div class="flex justify-between text-[10px] font-semibold text-slate-600"><span>本社総務</span><span>100%</span></div>
+                <div class="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-200"><div class="h-full w-full rounded-full bg-indigo-500"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="mt-12 border-t border-slate-200 pt-6 text-center text-xs text-slate-500">
+      静的図解 · 本番では遷移・API・二重送信防止を実装。回答者側図解は <code class="rounded bg-slate-100 px-1 py-0.5 text-[10px]">response-ui/diagram.html</code>
+    </footer>
+  </main>
+</body>
+</html>
