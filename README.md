@@ -343,6 +343,71 @@ Card、Grid、Badge、Modal、Table、Alert、Progress Bar
 
 ---
 
+## 現在の運用手順（1枚）
+
+この章は、現時点の実装（Google Spreadsheet + GAS + GitHub Pages）で実際に回すための最短手順を1枚にまとめたもの。
+
+### 事前設定（初回のみ）
+
+1. スプレッドシートに `社員マスター` / `セッション` / `レスポンス` / `回答トークン` を用意する。
+2. GAS (`google-apps-script/Code.gs`) をスプレッドシートに貼り、ウェブアプリをデプロイして `.../exec` URL を取得する。
+3. `response-ui/respond.html` の `DEFAULT_GAS_WEBAPP_URL` に `.../exec` を設定し、GitHub Pages に反映する。
+4. 回答フォーム URL を確認する（例: `https://ym291981-gif.github.io/disaster-safety-check/response-ui/respond.html`）。
+
+### セッション開始〜回答受付
+
+1. `セッション` シートに対象セッションを登録（例: `202605`）。
+2. `runIssueTokensFromEditor()` を実行し、対象者のトークンを `回答トークン` に発行する。
+3. 社員ごとの回答 URL（`respond.html?token=...`）を配布する。
+4. 回答者は URL を開き、ステータスを選んで送信する（トークン付きではセッションID/社員番号入力不要）。
+
+### 管理者確認
+
+1. `レスポンス` シートに回答が保存されていることを確認する。
+2. `admin-ui/dashboard.html` で同じセッション ID を読み込み、集計結果を確認する。
+
+### 運用ルール（確定）
+
+- **再回答可能であること**  
+  `TOKEN_MARK_USED_AFTER_SAVE = false` を採用し、同じトークン URL からの再送信を許可する。
+- **上書きできるルールであること**  
+  同一 `session_id + employee_id` の再送信は新規行追加ではなく既存行の上書き更新とする。
+
+### いまは作らないもの（意図的に保留）
+
+- 一斉配布の本文テンプレート（メール/LINE）は、将来「発信ボタン」実装時に作成する。
+
+---
+
+## 次回チャット開始用メモ（開発引き継ぎ）
+
+次回は新しいチャットで開始する前提。以下を共有すれば文脈を早く再現できる。
+
+### 完了済み
+
+- トークン運用: `回答トークン` シート + `issueTokensForSession` / `runIssueTokensFromEditor`。
+- 回答フォーム: `response-ui/respond.html`
+  - トークンモード（ID入力なし）
+  - 注意文言（専用リンク・共有禁止）
+  - 信号機スタイル配色
+  - `DEFAULT_GAS_WEBAPP_URL` による URL 欄の省略
+- 集計 API / 保存 API: `google-apps-script/Code.gs`
+- ダッシュボード表示: `admin-ui/dashboard.html`
+- GitHub Pages 公開済み（回答フォーム確認済み）
+
+### 現在の前提
+
+- 運用ルールは「再回答可」「上書き保存」。
+- 回答トークンの `used` は運用上ほぼ `FALSE` のまま（ワンタイム化しない）。
+
+### 次回の候補（未着手）
+
+1. 管理者の「開始」UI（セッション作成〜トークン発行〜配布導線）
+2. 配布自動化（メール/LINE送信）
+3. ダッシュボード強化（グラフ・通知）
+
+---
+
 ## ライセンス・課題について
 
 AIスクール課題用プロジェクト。本番のLINE WORKS・社内DB連携は将来拡張として扱う。
