@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>安否確認 — 回答フォーム</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: { fontFamily: { sans: ['"Noto Sans JP"', 'system-ui', 'sans-serif'] } },
+      },
+    };
+  </script>
+</head>
+<body class="min-h-screen bg-slate-100 text-slate-900 antialiased">
+  <header class="border-b border-slate-200 bg-white px-4 py-5 shadow-sm">
+    <div class="mx-auto max-w-lg">
+      <p class="text-xs font-semibold text-red-700">災害時安否確認 · 回答</p>
+      <h1 class="mt-1 text-xl font-bold text-slate-800">状況の回答</h1>
+      <p id="tokenBanner" class="mt-2 hidden rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-900 ring-1 ring-indigo-200"></p>
+      <p id="modeHint" class="mt-2 text-sm text-slate-600"></p>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-lg px-4 py-8">
+    <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <label class="block text-xs font-bold text-slate-600">
+        ウェブアプリ URL（<span class="font-mono">.../exec</span> まで）
+      </label>
+      <input
+        id="gasUrl"
+        type="url"
+        class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+        placeholder="https://script.google.com/macros/s/.../exec"
+      />
+      <p class="mt-1 text-[10px] text-slate-500">
+        <strong class="text-slate-700">Google Apps Script（GAS）</strong>をウェブアプリとして公開したときの URL。ブラウザに保存します。
+      </p>
+
+      <form id="respondForm" method="POST" class="mt-6 space-y-5" target="_self">
+        <input type="hidden" name="response_channel" value="web" />
+        <input type="hidden" name="token" id="formToken" value="" disabled />
+
+        <div id="manualIds" class="space-y-5">
+          <p class="text-xs font-semibold text-amber-800">
+            【手動モード】トークン無しの検証用：セッション ID と社員番号を自分で入力します（本番では使いません）。
+          </p>
+          <div>
+            <label class="block text-xs font-bold text-slate-600">セッション ID</label>
+            <input
+              name="session_id"
+              id="session_id"
+              class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              placeholder="例: 202605"
+            />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-600">社員番号</label>
+            <input
+              name="employee_id"
+              id="employee_id"
+              class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              placeholder="例: 1001"
+            />
+          </div>
+        </div>
+
+        <fieldset>
+          <legend class="text-xs font-bold text-slate-600">ステータス</legend>
+          <div class="mt-2 space-y-2 text-sm">
+            <label class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <input type="radio" name="status" value="safe" class="text-green-600" required />
+              <span>無事</span>
+            </label>
+            <label class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <input type="radio" name="status" value="minor_injury" class="text-amber-600" />
+              <span>軽症（自力で解決可）</span>
+            </label>
+            <label class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <input type="radio" name="status" value="need_help" class="text-red-600" />
+              <span>要救助（直ちに救援を求めます）</span>
+            </label>
+            <label class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+              <input type="radio" name="status" value="other" class="text-slate-600" />
+              <span>その他（コメント必須）</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-600">コメント（任意・「その他」のときは必須）</label>
+          <textarea name="comment" id="comment" rows="3" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="補足があれば入力"></textarea>
+        </div>
+
+        <button type="submit" class="w-full rounded-xl bg-slate-800 py-3 text-sm font-bold text-white hover:bg-slate-900">
+          スプレッドシートに送信する
+        </button>
+      </form>
+    </div>
+
+    <p class="mt-4 text-center text-xs text-slate-500">
+      <span class="font-semibold text-slate-600">トークン付き:</span>
+      <code class="rounded bg-slate-100 px-1">.../respond.html?token=（長い文字列）</code><br />
+      <span class="font-semibold text-slate-600">手動検証:</span>
+      <code class="rounded bg-slate-100 px-1">?sessionId=202605&amp;employeeId=1001</code>
+    </p>
+  </main>
+
+  <script>
+    (function () {
+      var LS = 'disaster_gas_webapp_url';
+      var gasEl = document.getElementById('gasUrl');
+      gasEl.value = localStorage.getItem(LS) || '';
+
+      var q = new URLSearchParams(window.location.search);
+      var urlToken = (q.get('token') || '').trim();
+      var sid = q.get('sessionId') || q.get('session_id') || '';
+      var eid = q.get('employeeId') || q.get('employee_id') || q.get('社員番号') || '';
+
+      var manual = document.getElementById('manualIds');
+      var sessionEl = document.getElementById('session_id');
+      var empEl = document.getElementById('employee_id');
+      var tokenInput = document.getElementById('formToken');
+      var banner = document.getElementById('tokenBanner');
+      var modeHint = document.getElementById('modeHint');
+
+      if (urlToken) {
+        manual.classList.add('hidden');
+        tokenInput.disabled = false;
+        tokenInput.value = urlToken;
+        sessionEl.removeAttribute('name');
+        empEl.removeAttribute('name');
+        sessionEl.required = false;
+        empEl.required = false;
+        modeHint.textContent =
+          'トークンモード: URL に含まれる合言葉だけで本人とセッションをサーバが特定します（画面上に社員番号は出しません）。';
+        var gas = gasEl.value.trim();
+        if (gas) {
+          var infoUrl =
+            gas.split('?')[0] +
+            '?token=' +
+            encodeURIComponent(urlToken) +
+            '&mode=tokenInfo';
+          fetch(infoUrl)
+            .then(function (r) {
+              return r.json();
+            })
+            .then(function (d) {
+              if (d.ok && d.session_title) {
+                banner.textContent = 'セッション: 「' + d.session_title + '」の回答フォームです。';
+                banner.classList.remove('hidden');
+              } else if (d.ok) {
+                banner.textContent = 'セッション ID: ' + (d.session_id || '') + ' の回答フォームです。';
+                banner.classList.remove('hidden');
+              } else {
+                banner.textContent =
+                  'トークンの確認に失敗しました（期限切れ・無効・または URL の誤り）。このまま送れない場合があります。';
+                banner.classList.remove('hidden');
+                banner.classList.add('bg-amber-50', 'text-amber-900', 'ring-amber-200');
+              }
+            })
+            .catch(function () {
+              banner.textContent =
+                'トークン確認をスキップしました（オフラインや CORS のとき）。送信時にサーバが検証します。ウェブアプリ URL を確認してください。';
+              banner.classList.remove('hidden');
+              banner.classList.add('bg-slate-50');
+            });
+        }
+      } else {
+        sessionEl.required = true;
+        empEl.required = true;
+        if (sid) sessionEl.value = sid;
+        if (eid) empEl.value = eid;
+        modeHint.textContent =
+          '手動モード: 検証用にセッション ID と社員番号を入力してください。トークン付き URL を使うと入力は不要です。';
+      }
+
+      document.getElementById('respondForm').addEventListener('submit', function (ev) {
+        var base = gasEl.value.trim();
+        if (!base) {
+          ev.preventDefault();
+          alert('ウェブアプリ URL を入力してください。');
+          return;
+        }
+        this.action = base.split('?')[0];
+
+        var st = this.querySelector('input[name="status"]:checked');
+        if (!st) return;
+        if (st.value === 'other') {
+          var c = document.getElementById('comment').value.trim();
+          if (!c) {
+            ev.preventDefault();
+            alert('「その他」を選ぶときはコメントを入力してください。');
+          }
+        }
+
+        localStorage.setItem(LS, base);
+      });
+    })();
+  </script>
+</body>
+</html>
