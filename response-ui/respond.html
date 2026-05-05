@@ -37,7 +37,9 @@
   </header>
 
   <main class="mx-auto max-w-lg px-4 py-8">
-    <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div class="bg-red-700 px-4 py-2.5 text-center text-xs font-semibold text-white">【緊急】安否確認</div>
+      <div class="p-5">
       <label class="block text-xs font-bold text-slate-600">
         ウェブアプリ URL（<span class="font-mono">.../exec</span> まで）
       </label>
@@ -83,24 +85,61 @@
           </div>
         </div>
 
-        <fieldset>
+        <fieldset class="border-0 p-0">
           <legend class="text-xs font-bold text-slate-600">ステータス</legend>
-          <div class="mt-2 space-y-2 text-sm">
-            <label class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
-              <input type="radio" name="status" value="safe" class="text-green-600" required />
-              <span>無事</span>
+          <p class="mt-1 text-center text-sm font-medium text-slate-700">
+            今の状況に最も近いものを<br class="sm:hidden" />1つ選んでください。
+          </p>
+          <div class="mt-4 space-y-3 text-sm">
+            <label class="block cursor-pointer">
+              <input type="radio" name="status" value="safe" class="peer sr-only" required />
+              <div
+                class="flex min-h-[4.25rem] items-center gap-4 rounded-xl border-2 border-green-600 bg-white px-3 py-3 text-left text-slate-900 shadow-sm transition hover:bg-green-50 active:scale-[0.99] peer-checked:bg-green-50 peer-checked:ring-2 peer-checked:ring-green-600/35 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-green-700"
+              >
+                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                  <span class="h-9 w-9 rounded-full bg-green-500 shadow-inner ring-2 ring-green-700/40"></span>
+                </span>
+                <span class="text-lg font-bold leading-tight">無事</span>
+              </div>
             </label>
-            <label class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
-              <input type="radio" name="status" value="minor_injury" class="text-amber-600" />
-              <span>軽症（自力で解決可）</span>
+            <label class="block cursor-pointer">
+              <input type="radio" name="status" value="minor_injury" class="peer sr-only" />
+              <div
+                class="flex min-h-[4.25rem] items-center gap-4 rounded-xl border-2 border-amber-500 bg-white px-3 py-3 text-left text-slate-900 shadow-sm transition hover:bg-amber-50 active:scale-[0.99] peer-checked:bg-amber-50 peer-checked:ring-2 peer-checked:ring-amber-500/40 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-amber-600"
+              >
+                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                  <span class="h-9 w-9 rounded-full bg-amber-400 shadow-inner ring-2 ring-amber-600/50"></span>
+                </span>
+                <span class="text-base font-bold leading-tight"
+                  >軽症<span class="block text-xs font-semibold text-slate-700">（自力で解決可）</span></span
+                >
+              </div>
             </label>
-            <label class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
-              <input type="radio" name="status" value="need_help" class="text-red-600" />
-              <span>要救助（直ちに救援を求めます）</span>
+            <label class="block cursor-pointer">
+              <input type="radio" name="status" value="need_help" class="peer sr-only" />
+              <div
+                class="flex min-h-[5rem] items-center gap-4 rounded-xl border-2 border-red-600 bg-white px-3 py-3 text-left text-slate-900 shadow-sm transition hover:bg-red-50 active:scale-[0.99] peer-checked:bg-red-50 peer-checked:ring-2 peer-checked:ring-red-600/40 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-red-700"
+              >
+                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                  <span class="h-9 w-9 rounded-full bg-red-600 shadow-inner ring-2 ring-red-800/40"></span>
+                </span>
+                <span class="text-base font-bold leading-tight"
+                  >要救助<span class="mt-0.5 block text-xs font-semibold text-red-700">直ちに救援を求めます</span></span
+                >
+              </div>
             </label>
-            <label class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
-              <input type="radio" name="status" value="other" class="text-slate-600" />
-              <span>その他（コメント必須）</span>
+            <label class="block cursor-pointer">
+              <input type="radio" name="status" value="other" class="peer sr-only" />
+              <div
+                class="flex min-h-[4.25rem] items-center gap-4 rounded-xl border-2 border-slate-400 bg-white px-3 py-3 text-left text-slate-900 shadow-sm transition hover:bg-slate-50 active:scale-[0.99] peer-checked:bg-slate-100 peer-checked:ring-2 peer-checked:ring-slate-500/35 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-slate-600"
+              >
+                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-2 ring-slate-200">
+                  <span class="h-9 w-9 rounded-full bg-slate-400 shadow-inner ring-2 ring-slate-500/40"></span>
+                </span>
+                <span class="text-base font-bold leading-tight text-slate-900"
+                  >その他<span class="font-semibold text-slate-700">（コメント記入）</span></span
+                >
+              </div>
             </label>
           </div>
         </fieldset>
@@ -110,10 +149,14 @@
           <textarea name="comment" id="comment" rows="3" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="補足があれば入力"></textarea>
         </div>
 
-        <button type="submit" class="w-full rounded-xl bg-slate-800 py-3 text-sm font-bold text-white hover:bg-slate-900">
-          スプレッドシートに送信する
+        <button
+          type="submit"
+          class="mt-2 w-full rounded-xl bg-slate-800 py-3.5 text-sm font-bold text-white shadow-sm hover:bg-slate-900"
+        >
+          この内容で送信する
         </button>
       </form>
+      </div>
     </div>
 
     <p class="mt-4 text-center text-xs text-slate-500">
