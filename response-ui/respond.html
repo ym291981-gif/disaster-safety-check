@@ -40,18 +40,20 @@
     <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div class="bg-red-700 px-4 py-2.5 text-center text-xs font-semibold text-white">【緊急】安否確認</div>
       <div class="p-5">
-      <label class="block text-xs font-bold text-slate-600">
-        ウェブアプリ URL（<span class="font-mono">.../exec</span> まで）
-      </label>
-      <input
-        id="gasUrl"
-        type="url"
-        class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-        placeholder="https://script.google.com/macros/s/.../exec"
-      />
-      <p class="mt-1 text-[10px] text-slate-500">
-        <strong class="text-slate-700">Google Apps Script（GAS）</strong>をウェブアプリとして公開したときの URL。ブラウザに保存します。
-      </p>
+      <div id="gasUrlSection">
+        <label class="block text-xs font-bold text-slate-600">
+          ウェブアプリ URL（<span class="font-mono">.../exec</span> まで）
+        </label>
+        <input
+          id="gasUrl"
+          type="url"
+          class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+          placeholder="https://script.google.com/macros/s/.../exec"
+        />
+        <p class="mt-1 text-[10px] text-slate-500">
+          <strong class="text-slate-700">Google Apps Script（GAS）</strong>をウェブアプリとして公開したときの URL。未設定のときのみ表示されます。入力した値はブラウザに保存されます。
+        </p>
+      </div>
 
       <form id="respondForm" method="POST" class="mt-6 space-y-5" target="_self">
         <input type="hidden" name="response_channel" value="web" />
@@ -169,14 +171,31 @@
 
   <script>
     (function () {
+      /**
+       * 本番: ここに GAS ウェブアプリ URL（…/exec まで、クエリなし）を貼ると、
+       * 画面上の入力欄は出ません。空のままなら従来どおり手入力＋localStorage。
+       * 緊急上書き: ページ URL に ?gasUrl=https%3A%2F%2F...%2Fexec または ?exec=... を付けても可。
+       */
+      var DEFAULT_GAS_WEBAPP_URL = '';
+
       var LS = 'disaster_gas_webapp_url';
       var gasEl = document.getElementById('gasUrl');
-      gasEl.value = localStorage.getItem(LS) || '';
+      var gasUrlSection = document.getElementById('gasUrlSection');
 
       var q = new URLSearchParams(window.location.search);
+      var queryGasOverride = (q.get('gasUrl') || q.get('exec') || '').trim();
       var urlToken = (q.get('token') || '').trim();
       var sid = q.get('sessionId') || q.get('session_id') || '';
       var eid = q.get('employeeId') || q.get('employee_id') || q.get('社員番号') || '';
+
+      var bakedGas = String(DEFAULT_GAS_WEBAPP_URL || '').trim();
+      var resolvedGas = queryGasOverride || bakedGas;
+      if (resolvedGas) {
+        gasEl.value = resolvedGas.split('?')[0];
+        gasUrlSection.classList.add('hidden');
+      } else {
+        gasEl.value = localStorage.getItem(LS) || '';
+      }
 
       var manual = document.getElementById('manualIds');
       var sessionEl = document.getElementById('session_id');
@@ -242,7 +261,9 @@
         var base = gasEl.value.trim();
         if (!base) {
           ev.preventDefault();
-          alert('ウェブアプリ URL を入力してください。');
+          alert(
+            'ウェブアプリ URL が未設定です。respond.html 内の DEFAULT_GAS_WEBAPP_URL を設定するか、画面上で入力してください。'
+          );
           return;
         }
         this.action = base.split('?')[0];
