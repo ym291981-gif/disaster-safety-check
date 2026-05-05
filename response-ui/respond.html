@@ -176,7 +176,7 @@
        * 画面上の入力欄は出ません。空のままなら従来どおり手入力＋localStorage。
        * 緊急上書き: ページ URL に ?gasUrl=https%3A%2F%2F...%2Fexec または ?exec=... を付けても可。
        */
-      var DEFAULT_GAS_WEBAPP_URL = '';
+      var DEFAULT_GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwM3I5IoVUZFnXfXoPvYbMVLiMQXypb_hXWWkvhv1Ja2BqGBim_IOtpTPS6vbsyLxtA/exec';
 
       var LS = 'disaster_gas_webapp_url';
       var gasEl = document.getElementById('gasUrl');
@@ -192,9 +192,11 @@
       var resolvedGas = queryGasOverride || bakedGas;
       if (resolvedGas) {
         gasEl.value = resolvedGas.split('?')[0];
-        gasUrlSection.classList.add('hidden');
+        /** Tailwind の動的 class より確実に隠す（CDN 環境でも効く） */
+        gasUrlSection.style.display = 'none';
       } else {
         gasEl.value = localStorage.getItem(LS) || '';
+        gasUrlSection.style.display = '';
       }
 
       var manual = document.getElementById('manualIds');
