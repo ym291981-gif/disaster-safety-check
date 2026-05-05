@@ -82,6 +82,12 @@ function buildPayload_(sessionId) {
     }
 
     var st = normalizeStatus_(r['ステータス'] || r['status']);
+    /** レスポンス行はあるがステータスが空＝未回答扱い（下書き行など） */
+    if (!st) {
+      noResponseList.push({ employeeId: eid, name: name, department: dept });
+      return;
+    }
+
     if (byStatus[st] === undefined) byStatus.unknown++;
     else byStatus[st]++;
 
@@ -177,11 +183,23 @@ function isActiveEmployee_(row) {
   return true;
 }
 
+/**
+ * README の保存値（英字）に正規化する。空は ''（未回答扱いに使う）。
+ * シートに日本語だけが入っている場合もここで吸収する。
+ */
 function normalizeStatus_(raw) {
-  var s = String(raw || '')
-    .trim()
-    .toLowerCase();
-  if (STATUS_KEYS.indexOf(s) !== -1) return s;
+  var s = String(raw || '').trim();
+  if (!s) return '';
+
+  var lower = s.toLowerCase();
+  if (STATUS_KEYS.indexOf(lower) !== -1) return lower;
+
+  var z = s.replace(/\s+/g, '');
+  if (z === '無事') return 'safe';
+  if (z === '軽症' || z === '軽傷') return 'minor_injury';
+  if (z === '要救助' || z === '要救護') return 'need_help';
+  if (z === 'その他') return 'other';
+
   return 'unknown';
 }
 
