@@ -332,6 +332,17 @@ Card、Grid、Badge、Modal、Table、Alert、Progress Bar
 
 ---
 
+## GitHub Pages で回答フォームを開くとき
+
+公開設定が **`/`（ルート）** のとき、次のどちらでも回答ページに届きます。
+
+- **`https://〈ユーザー名〉.github.io/〈リポジトリ名〉/`** … ルートの `index.html` から `response-ui/respond.html` へ誘導
+- **`https://〈ユーザー名〉.github.io/〈リポジトリ名〉/response-ui/respond.html`** … 回答ページを直接開く
+
+**合っているかの確認**: GitHub リポジトリの **Code** タブで、`response-ui/respond.html` とルートの `index.html` が **同じブランチ**に存在するか見る。Pages の **Branch** がそのブランチと一致しているか、**Folder** が **`/ (root)`** か（`/docs` にしている場合はファイルは `docs/` 以下に置く）。
+
+---
+
 ## ライセンス・課題について
 
 AIスクール課題用プロジェクト。本番のLINE WORKS・社内DB連携は将来拡張として扱う。
