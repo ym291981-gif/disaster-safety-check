@@ -11,6 +11,12 @@ var SHEET_SESSIONS = 'セッション';
 var SHEET_RESPONSES = 'レスポンス';
 /** 本人確認用トークンを保存するタブ名（手順どおりに新規作成する） */
 var SHEET_TOKENS = '回答トークン';
+/** 管理者の「発信」履歴を残す（無ければ自動作成） */
+var SHEET_BROADCASTS = '発信ログ';
+/** 実際の送信処理は未実装のため、配布対象のキューを残す */
+var SHEET_OUTBOX = '配布キュー';
+/** 複数管理者で共有する「担当・対応チェック」 */
+var SHEET_ASSIGNMENTS = '対応アサイン';
 /**
  * true: トークンで1回送信すると「使用済み」になり再送信不可（本番向け）。
  * false: 検証しやすいよう何度でも送信できる（課題・動作確認向け）。
@@ -62,6 +68,18 @@ function jsonOutput_(obj) {
 function doPost(e) {
   try {
     var data = parsePostPayload_(e);
+    /** 管理者: 発信（トークン発行＋ログ保存＋配布用URL生成） */
+    if (String(data.action || '').trim() === 'broadcast') {
+      return jsonOutput_(broadcast_(data));
+    }
+    /** 管理者: 担当する/引き継ぐ */
+    if (String(data.action || '').trim() === 'assign') {
+      return jsonOutput_(assignCase_(data));
+    }
+    /** 管理者: 対応チェック更新 */
+    if (String(data.action || '').trim() === 'updateChecklist') {
+      return jsonOutput_(updateChecklist_(data));
+    }
     var out = saveResponse_(data);
     return jsonOutput_(out);
   } catch (err) {
@@ -399,22 +417,58 @@ function buildPayload_(sessionId) {
   var byStatus = { safe: 0, minor_injury: 0, need_help: 0, other: 0, unknown: 0 };
   var needHelpList = [];
   var noResponseList = [];
+  var defaultOwnerByEmp = buildDefaultOwnerMap_(targets);
+  var assignments = readAssignmentsForSession_(ss, sessionId);
 
   targetIds.forEach(function (eid) {
     var r = respByEmp[eid];
     var emp = empById[eid] || {};
     var name = emp['氏名'] || emp['name'] || '';
     var dept = emp['部署'] || emp['department'] || '';
+    var office = emp['拠点'] || emp['office'] || '';
+    var phone = emp['電話番号'] || emp['phone'] || '';
+    var emergency = emp['緊急連絡先'] || emp['emergency_contact'] || '';
+    var defaultOwner = defaultOwnerByEmp[eid] || '';
 
     if (!r) {
-      noResponseList.push({ employeeId: eid, name: name, department: dept });
+      var a0 = assignments[eid + ':no_response'] || null;
+      noResponseList.push({
+        employeeId: eid,
+        name: name,
+        department: dept,
+        office: office,
+        phone: phone,
+        emergency_contact: emergency,
+        default_owner: defaultOwner,
+        current_owner: a0 ? String(a0.current_owner || '') : '',
+        checklist: a0
+          ? { ambulance: !!a0.ambulance_called, emergency: !!a0.emergency_contact_called }
+          : { ambulance: false, emergency: false },
+        updatedAt: a0 ? formatDate_(a0.updated_at) : '',
+        updatedBy: a0 ? String(a0.updated_by || '') : '',
+      });
       return;
     }
 
     var st = normalizeStatus_(r['ステータス'] || r['status']);
     /** レスポンス行はあるがステータスが空＝未回答扱い（下書き行など） */
     if (!st) {
-      noResponseList.push({ employeeId: eid, name: name, department: dept });
+      var a1 = assignments[eid + ':no_response'] || null;
+      noResponseList.push({
+        employeeId: eid,
+        name: name,
+        department: dept,
+        office: office,
+        phone: phone,
+        emergency_contact: emergency,
+        default_owner: defaultOwner,
+        current_owner: a1 ? String(a1.current_owner || '') : '',
+        checklist: a1
+          ? { ambulance: !!a1.ambulance_called, emergency: !!a1.emergency_contact_called }
+          : { ambulance: false, emergency: false },
+        updatedAt: a1 ? formatDate_(a1.updated_at) : '',
+        updatedBy: a1 ? String(a1.updated_by || '') : '',
+      });
       return;
     }
 
@@ -422,18 +476,31 @@ function buildPayload_(sessionId) {
     else byStatus[st]++;
 
     if (st === 'need_help') {
+      var a2 = assignments[eid + ':need_help'] || null;
       needHelpList.push({
         employeeId: eid,
         name: name,
         department: dept,
+        office: office,
+        phone: phone,
+        emergency_contact: emergency,
+        default_owner: defaultOwner,
+        current_owner: a2 ? String(a2.current_owner || '') : '',
+        checklist: a2
+          ? { ambulance: !!a2.ambulance_called, emergency: !!a2.emergency_contact_called }
+          : { ambulance: false, emergency: false },
+        updatedAt: a2 ? formatDate_(a2.updated_at) : '',
+        updatedBy: a2 ? String(a2.updated_by || '') : '',
         comment: r['コメント'] || r['comment'] || '',
         answeredAt: formatDate_(r['回答日時'] || r['answered_at']),
+        response_channel: r['回答チャネル'] || r['response_channel'] || '',
       });
     }
   });
 
   var answered = targetIds.length - noResponseList.length;
   var byDepartment = buildDepartmentBreakdown_(targets, respByEmp);
+  var byOffice = buildOfficeRates_(targets, respByEmp);
 
   return {
     sessionId: sessionId,
@@ -441,6 +508,7 @@ function buildPayload_(sessionId) {
       title: sessionRow['タイトル'] || sessionRow['title'] || '',
       status: sessionRow['状態'] || sessionRow['status'] || '',
       targetCountSheet: sessionRow['対象人数'] || sessionRow['target_count'] || '',
+      dueAt: formatDate_(sessionRow['回答期限'] || sessionRow['response_due_at'] || sessionRow['due_at'] || sessionRow['dueAt']),
     },
     totals: {
       target: targetIds.length,
@@ -452,6 +520,7 @@ function buildPayload_(sessionId) {
     needHelpList: needHelpList,
     noResponseList: noResponseList,
     byDepartment: byDepartment,
+    byOffice: byOffice,
   };
 }
 
@@ -552,4 +621,428 @@ function buildDepartmentBreakdown_(targets, respByEmp) {
     .map(function (k) {
       return map[k];
     });
+}
+
+function buildOfficeRates_(targets, respByEmp) {
+  var map = {};
+  targets.forEach(function (emp) {
+    var office = String(emp['拠点'] || emp['office'] || '（未設定）').trim() || '（未設定）';
+    if (!map[office]) map[office] = { office: office, answered: 0, total: 0 };
+    var eid = String(emp['社員番号'] || emp['employee_id'] || '').trim();
+    map[office].total++;
+    if (respByEmp[eid] && normalizeStatus_(respByEmp[eid]['ステータス'] || respByEmp[eid]['status'])) map[office].answered++;
+  });
+  return Object.keys(map)
+    .sort()
+    .map(function (k) {
+      var o = map[k];
+      o.rate = o.total ? Math.round((1000 * o.answered) / o.total) / 10 : 0;
+      return o;
+    })
+    .sort(function (a, b) {
+      /** 未回答が多い（rateが低い）順に並べる */
+      return (a.rate || 0) - (b.rate || 0);
+    });
+}
+
+function getOrCreateSheet_(ss, name, headers) {
+  var sh = ss.getSheetByName(name);
+  if (sh) return sh;
+  sh = ss.insertSheet(name);
+  if (headers && headers.length) sh.appendRow(headers);
+  return sh;
+}
+
+function broadcast_(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sessionId = String(data.session_id || data.sessionId || '').trim();
+  if (!sessionId) throw new Error('sessionId が必要です');
+
+  /** 配布する回答フォームURL（respond.html のURL）。無いならログだけ残す。 */
+  var respondBaseUrl = String(data.respond_base_url || data.respondBaseUrl || '').trim();
+  var title = String(data.title || '').trim();
+  var body = String(data.body || data.message || '').trim();
+  var dueAtRaw = data.due_at || data.dueAt || data.回答期限 || data.response_due_at;
+  var dueAt = parseDateish_(dueAtRaw);
+  var createSession = String(data.create_session || data.createSession || '').trim();
+  /** デフォルトは作成する（管理者がスプレッドシートを触らない運用を優先） */
+  if (createSession === '') createSession = 'true';
+  var willCreate = String(createSession).toLowerCase() !== 'false';
+
+  /** セッションが無ければ作成（あれば更新） */
+  if (willCreate) {
+    upsertSessionRow_(ss, sessionId, title, dueAt);
+  } else {
+    if (!findSessionRow_(ss, sessionId)) throw new Error('セッションが見つかりません: ' + sessionId);
+  }
+
+  var issued = issueTokensForSession(sessionId);
+
+  var links = [];
+  if (respondBaseUrl) {
+    var base = respondBaseUrl.replace(/\?.*$/, '');
+    issued.forEach(function (x) {
+      links.push({
+        employee_id: x.employee_id,
+        url: base + '?token=' + encodeURIComponent(String(x.token || '').trim()),
+      });
+    });
+  }
+
+  var sh = getOrCreateSheet_(ss, SHEET_BROADCASTS, [
+    'created_at',
+    'session_id',
+    'title',
+    'body',
+    'respond_base_url',
+    'issued_count',
+  ]);
+  sh.appendRow([new Date(), sessionId, title, body, respondBaseUrl, issued.length]);
+
+  /** 配布キューに全員分の「配布対象」を書き出す（送信処理は別実装） */
+  var outboxCount = writeOutbox_(ss, sessionId, title, body, links);
+
+  /** 大量データを返しすぎない（UI側で必要ならCSV化などに拡張） */
+  var preview = links.slice(0, 30);
+  return {
+    ok: true,
+    action: 'broadcast',
+    session_id: sessionId,
+    issued_count: issued.length,
+    outbox_count: outboxCount,
+    respond_base_url: respondBaseUrl,
+    links_preview: preview,
+    note:
+      'このAPIは「セッション作成/更新 → トークン再発行 → 配布キュー作成 → 発信ログ記録 → 配布用URL生成」までを行います。実際のLINE/メール送信は未実装のため、配布キューや links_preview を元に配布してください。',
+  };
+}
+
+function upsertSessionRow_(ss, sessionIdStr, title, dueAtMaybe_) {
+  var sh = getSheet_(ss, SHEET_SESSIONS);
+  var range = sh.getDataRange();
+  var values = range.getValues();
+  if (!values.length) throw new Error('セッションシートが空です。1行目にヘッダーを入れてください');
+  var headers = values[0].map(function (h) {
+    return String(h).trim();
+  });
+
+  var cSid = headerIndex_(headers, ['セッションID', 'session_ID', 'session_id', 'sessionId']);
+  if (cSid < 0) throw new Error('セッションシートにセッションID列（session_id 等）がありません');
+  var cTitle = headerIndex_(headers, ['タイトル', 'title']);
+  var cStatus = headerIndex_(headers, ['状態', 'status']);
+  var cCreated = headerIndex_(headers, ['作成日時', 'created_at', 'createdAt', '送信開始日時', 'send_started_at']);
+  var cTarget = headerIndex_(headers, ['対象人数', 'target_count', 'targetCount']);
+  var cDue = headerIndex_(headers, ['回答期限', 'response_due_at', 'due_at', 'dueAt']);
+
+  var now = new Date();
+  var rowIndex = -1;
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][cSid] || '').trim() === sessionIdStr) {
+      rowIndex = r + 1;
+      break;
+    }
+  }
+
+  if (rowIndex > 0) {
+    if (cTitle >= 0 && title) sh.getRange(rowIndex, cTitle + 1).setValue(title);
+    if (cStatus >= 0) sh.getRange(rowIndex, cStatus + 1).setValue('受付中');
+    if (cCreated >= 0 && !sh.getRange(rowIndex, cCreated + 1).getValue())
+      sh.getRange(rowIndex, cCreated + 1).setValue(now);
+    if (cTarget >= 0)
+      sh.getRange(rowIndex, cTarget + 1).setValue(readObjects_(getSheet_(ss, SHEET_EMPLOYEES)).filter(isActiveEmployee_).length);
+    if (cDue >= 0 && dueAtMaybe_ !== undefined) {
+      if (dueAtMaybe_) sh.getRange(rowIndex, cDue + 1).setValue(dueAtMaybe_);
+      else sh.getRange(rowIndex, cDue + 1).setValue('');
+    }
+    return;
+  }
+
+  var newRow = [];
+  for (var i = 0; i < headers.length; i++) newRow.push('');
+  newRow[cSid] = sessionIdStr;
+  if (cTitle >= 0) newRow[cTitle] = title || '';
+  if (cStatus >= 0) newRow[cStatus] = '受付中';
+  if (cCreated >= 0) newRow[cCreated] = now;
+  if (cTarget >= 0) newRow[cTarget] = readObjects_(getSheet_(ss, SHEET_EMPLOYEES)).filter(isActiveEmployee_).length;
+  if (cDue >= 0 && dueAtMaybe_) newRow[cDue] = dueAtMaybe_;
+  sh.appendRow(newRow);
+}
+
+function parseDateish_(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return v;
+  /** issue.html は datetime-local を送る（例: 2026-05-07T19:30） */
+  var s = String(v).trim();
+  if (!s) return null;
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) return d;
+  /** "yyyy/MM/dd HH:mm" なども一応吸収 */
+  var normalized = s.replace(/\//g, '-').replace(' ', 'T');
+  d = new Date(normalized);
+  if (!isNaN(d.getTime())) return d;
+  return null;
+}
+
+function writeOutbox_(ss, sessionIdStr, title, body, links) {
+  var sh = getOrCreateSheet_(ss, SHEET_OUTBOX, [
+    'created_at',
+    'session_id',
+    'employee_id',
+    'name',
+    'department',
+    'office',
+    'email',
+    'phone',
+    'line_user_id',
+    'respond_url',
+    'title',
+    'body',
+    'status',
+  ]);
+
+  /** 今回セッション分の既存キューを削除して入れ替え */
+  var values = sh.getDataRange().getValues();
+  if (values.length >= 2) {
+    var headers = values[0].map(function (h) {
+      return String(h).trim();
+    });
+    var cSid = headerIndex_(headers, ['session_id', 'セッションID', 'session_ID', 'sessionId']);
+    if (cSid >= 0) {
+      for (var r = values.length; r >= 2; r--) {
+        if (String(values[r - 1][cSid] || '').trim() === sessionIdStr) sh.deleteRow(r);
+      }
+    }
+  }
+
+  var employees = readObjects_(getSheet_(ss, SHEET_EMPLOYEES)).filter(isActiveEmployee_);
+  var linkByEmp = {};
+  (links || []).forEach(function (x) {
+    if (x && x.employee_id) linkByEmp[String(x.employee_id).trim()] = String(x.url || '').trim();
+  });
+
+  var now = new Date();
+  var count = 0;
+  employees.forEach(function (emp) {
+    var eid = String(emp['社員番号'] || emp['employee_id'] || '').trim();
+    if (!eid) return;
+    var url = linkByEmp[eid] || '';
+    sh.appendRow([
+      now,
+      sessionIdStr,
+      eid,
+      emp['氏名'] || emp['name'] || '',
+      emp['部署'] || emp['department'] || '',
+      emp['拠点'] || emp['office'] || '',
+      emp['email'] || emp['メール'] || '',
+      emp['電話番号'] || emp['phone'] || '',
+      emp['line_user_id'] || emp['LINE'] || '',
+      url,
+      title || '',
+      body || '',
+      'queued',
+    ]);
+    count++;
+  });
+  return count;
+}
+
+function buildDefaultOwnerMap_(targets) {
+  var map = {};
+  (targets || []).forEach(function (emp) {
+    var eid = String(emp['社員番号'] || emp['employee_id'] || '').trim();
+    if (!eid) return;
+    var owner = String(emp['担当者'] || emp['owner'] || emp['担当'] || '').trim();
+    map[eid] = owner;
+  });
+  return map;
+}
+
+function normalizeCaseType_(v) {
+  var s = String(v || '').trim();
+  if (!s) return '';
+  if (s === 'need_help' || s === 'no_response') return s;
+  /** 互換: no_response_overdue など */
+  if (s.indexOf('no_response') === 0) return 'no_response';
+  return s;
+}
+
+function readAssignmentsForSession_(ss, sessionIdStr) {
+  var sh = ss.getSheetByName(SHEET_ASSIGNMENTS);
+  if (!sh) return {};
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return {};
+  var headers = values[0].map(function (h) {
+    return String(h).trim();
+  });
+  var cSid = headerIndex_(headers, ['session_id', 'セッションID', 'sessionId', 'session_ID']);
+  var cEmp = headerIndex_(headers, ['employee_id', '社員番号']);
+  var cType = headerIndex_(headers, ['case_type', '種別', 'type']);
+  if (cSid < 0 || cEmp < 0 || cType < 0) return {};
+
+  var idx = function (names) {
+    return headerIndex_(headers, names);
+  };
+  var cDef = idx(['default_owner', '既定担当', 'defaultOwner']);
+  var cCur = idx(['current_owner', '担当者', 'currentOwner']);
+  var cAmb = idx(['ambulance_called', '救急へ連絡']);
+  var cEmg = idx(['emergency_contact_called', '緊急連絡先への連絡']);
+  var cSt = idx(['status', '状態']);
+  var cUpdAt = idx(['updated_at', '更新日時']);
+  var cUpdBy = idx(['updated_by', '更新者']);
+  var cNote = idx(['handover_note', '引継メモ']);
+
+  var out = {};
+  for (var r = 1; r < values.length; r++) {
+    var row = values[r];
+    if (String(row[cSid] || '').trim() !== sessionIdStr) continue;
+    var eid = String(row[cEmp] || '').trim();
+    if (!eid) continue;
+    var type = normalizeCaseType_(row[cType]);
+    if (!type) continue;
+    out[eid + ':' + type] = {
+      sheetRow: r + 1,
+      session_id: sessionIdStr,
+      employee_id: eid,
+      case_type: type,
+      default_owner: cDef >= 0 ? row[cDef] : '',
+      current_owner: cCur >= 0 ? row[cCur] : '',
+      ambulance_called: cAmb >= 0 ? isTruthyUsed_(row[cAmb]) : false,
+      emergency_contact_called: cEmg >= 0 ? isTruthyUsed_(row[cEmg]) : false,
+      status: cSt >= 0 ? row[cSt] : '',
+      updated_at: cUpdAt >= 0 ? row[cUpdAt] : '',
+      updated_by: cUpdBy >= 0 ? row[cUpdBy] : '',
+      handover_note: cNote >= 0 ? row[cNote] : '',
+    };
+  }
+  return out;
+}
+
+function ensureAssignmentsSheet_(ss) {
+  return getOrCreateSheet_(ss, SHEET_ASSIGNMENTS, [
+    'session_id',
+    'employee_id',
+    'case_type',
+    'default_owner',
+    'current_owner',
+    'ambulance_called',
+    'emergency_contact_called',
+    'status',
+    'updated_at',
+    'updated_by',
+    'handover_note',
+  ]);
+}
+
+function upsertAssignment_(ss, sessionIdStr, employeeIdStr, caseType, fields) {
+  var sh = ensureAssignmentsSheet_(ss);
+  var values = sh.getDataRange().getValues();
+  var headers = values[0].map(function (h) {
+    return String(h).trim();
+  });
+  var cSid = headerIndex_(headers, ['session_id']);
+  var cEmp = headerIndex_(headers, ['employee_id']);
+  var cType = headerIndex_(headers, ['case_type']);
+
+  var rowIndex = -1;
+  for (var r = 1; r < values.length; r++) {
+    if (
+      String(values[r][cSid] || '').trim() === sessionIdStr &&
+      String(values[r][cEmp] || '').trim() === employeeIdStr &&
+      String(values[r][cType] || '').trim() === caseType
+    ) {
+      rowIndex = r + 1;
+      break;
+    }
+  }
+
+  if (rowIndex < 0) {
+    sh.appendRow([
+      sessionIdStr,
+      employeeIdStr,
+      caseType,
+      fields.default_owner || '',
+      fields.current_owner || '',
+      fields.ambulance_called ? true : false,
+      fields.emergency_contact_called ? true : false,
+      fields.status || '',
+      fields.updated_at || new Date(),
+      fields.updated_by || '',
+      fields.handover_note || '',
+    ]);
+    return;
+  }
+
+  var setCell = function (colName, val) {
+    var c = headerIndex_(headers, [colName]);
+    if (c >= 0) sh.getRange(rowIndex, c + 1).setValue(val);
+  };
+  if (fields.default_owner !== undefined) setCell('default_owner', fields.default_owner);
+  if (fields.current_owner !== undefined) setCell('current_owner', fields.current_owner);
+  if (fields.ambulance_called !== undefined) setCell('ambulance_called', fields.ambulance_called ? true : false);
+  if (fields.emergency_contact_called !== undefined)
+    setCell('emergency_contact_called', fields.emergency_contact_called ? true : false);
+  if (fields.status !== undefined) setCell('status', fields.status);
+  setCell('updated_at', fields.updated_at || new Date());
+  setCell('updated_by', fields.updated_by || '');
+  if (fields.handover_note !== undefined) setCell('handover_note', fields.handover_note || '');
+}
+
+function assignCase_(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sessionId = String(data.session_id || data.sessionId || '').trim();
+  var employeeId = String(data.employee_id || data.employeeId || '').trim();
+  var caseType = normalizeCaseType_(data.case_type || data.caseType || '');
+  var operator = String(data.operator || data.updated_by || '').trim();
+  var note = String(data.handover_note || data.note || '').trim();
+  if (!sessionId || !employeeId || !caseType) throw new Error('sessionId / employeeId / caseType が必要です');
+  if (!operator) throw new Error('operator（管理者名）が必要です');
+  if (!findSessionRow_(ss, sessionId)) throw new Error('セッションが見つかりません: ' + sessionId);
+  ensureEmployeeExists_(ss, employeeId);
+
+  var employees = readObjects_(getSheet_(ss, SHEET_EMPLOYEES));
+  var defaultOwner = '';
+  for (var i = 0; i < employees.length; i++) {
+    var eid = String(employees[i]['社員番号'] || employees[i]['employee_id'] || '').trim();
+    if (eid === employeeId) {
+      defaultOwner = String(employees[i]['担当者'] || employees[i]['owner'] || employees[i]['担当'] || '').trim();
+      break;
+    }
+  }
+
+  upsertAssignment_(ss, sessionId, employeeId, caseType, {
+    default_owner: defaultOwner,
+    current_owner: operator,
+    status: 'assigned',
+    updated_at: new Date(),
+    updated_by: operator,
+    handover_note: note,
+  });
+
+  return { ok: true, action: 'assign', session_id: sessionId, employee_id: employeeId, case_type: caseType, current_owner: operator };
+}
+
+function updateChecklist_(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sessionId = String(data.session_id || data.sessionId || '').trim();
+  var employeeId = String(data.employee_id || data.employeeId || '').trim();
+  var caseType = normalizeCaseType_(data.case_type || data.caseType || '');
+  var operator = String(data.operator || data.updated_by || '').trim();
+  if (!sessionId || !employeeId || !caseType) throw new Error('sessionId / employeeId / caseType が必要です');
+  if (!operator) throw new Error('operator（管理者名）が必要です');
+
+  var amb = data.ambulance_called;
+  var emg = data.emergency_contact_called;
+  var ambBool = amb === undefined ? undefined : isTruthyUsed_(amb) || amb === true;
+  var emgBool = emg === undefined ? undefined : isTruthyUsed_(emg) || emg === true;
+
+  /** 未作成なら作る（担当未割当でもチェックは残せる） */
+  upsertAssignment_(ss, sessionId, employeeId, caseType, {
+    ambulance_called: ambBool,
+    emergency_contact_called: emgBool,
+    status: ambBool && emgBool ? 'done' : 'assigned',
+    updated_at: new Date(),
+    updated_by: operator,
+  });
+
+  return { ok: true, action: 'updateChecklist', session_id: sessionId, employee_id: employeeId, case_type: caseType };
 }

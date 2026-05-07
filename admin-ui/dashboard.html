@@ -21,8 +21,18 @@
 <body class="min-h-screen bg-slate-100 text-slate-900 antialiased">
   <header class="border-b border-slate-200 bg-white px-4 py-5 shadow-sm">
     <div class="mx-auto max-w-6xl">
-      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">災害時安否確認 · 管理者</p>
-      <h1 class="mt-1 text-2xl font-bold text-slate-800">集計ダッシュボード</h1>
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">災害時安否確認 · 管理者</p>
+          <h1 class="mt-1 text-2xl font-bold text-slate-800">集計ダッシュボード</h1>
+        </div>
+        <a
+          href="issue.html"
+          class="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-slate-950"
+        >
+          発信
+        </a>
+      </div>
       <p class="mt-2 max-w-3xl text-sm text-slate-600">
         Google Apps Script のウェブアプリ URL（<code class="rounded bg-slate-100 px-1 text-xs">.../exec</code> まで）とセッション ID を指定して読み込みます。初回のみ URL を入力し、「ブラウザに保存」で次回から自動入力できます。
       </p>
@@ -41,6 +51,16 @@
             placeholder="https://script.google.com/macros/s/AKfycb.../exec"
             class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-600">管理者名（共有ログ用）</label>
+          <input
+            id="operator"
+            type="text"
+            placeholder="例: 佐藤"
+            class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+          <p class="mt-1 text-[10px] text-slate-500">担当・引き継ぎ・チェック更新の「更新者」として記録されます。</p>
         </div>
         <div>
           <label class="block text-xs font-bold text-slate-600">セッション ID</label>
@@ -108,15 +128,37 @@
       </div>
 
       <div class="grid gap-6 lg:grid-cols-2">
-        <section class="rounded-2xl border border-red-200 bg-red-50/30 p-5 shadow-sm">
+        <section class="rounded-2xl border border-red-300 bg-red-100/50 p-5 shadow-sm">
           <h3 class="text-sm font-bold text-red-900">要救護者</h3>
           <ul class="mt-3 space-y-2" id="needHelpList"></ul>
         </section>
-        <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 class="text-sm font-bold text-slate-800">未回答者</h3>
+        <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" id="noResponseSection">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 class="text-sm font-bold text-slate-800" id="noResponseTitle">未回答者</h3>
+            <p class="text-xs text-slate-500" id="noResponseDueHint"></p>
+          </div>
           <ul class="mt-3 space-y-2" id="noResponseList"></ul>
+          <div class="mt-3 hidden" id="noResponseMoreWrap">
+            <button
+              type="button"
+              id="btnNoResponseAll"
+              class="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 shadow-sm hover:bg-slate-50"
+            >
+              未回答者を開く
+            </button>
+          </div>
         </section>
       </div>
+
+      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 class="text-sm font-bold text-slate-700">拠点（地域）別 回答率</h3>
+          <p class="text-xs text-slate-500">回答率（%）のみ。未回答の偏りを素早く検知する用途。</p>
+        </div>
+        <div class="mt-4">
+          <div id="byOffice" class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"></div>
+        </div>
+      </section>
 
       <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 class="text-sm font-bold text-slate-700">部署別（回答済 / 未回答）</h3>
@@ -131,10 +173,17 @@
 
   <script>
     (function () {
+      /** 大量人数でも画面が破綻しないよう「プレビュー表示」を制限する */
+      var NO_RESPONSE_PREVIEW_LIMIT = 10;
+      var LS_OPERATOR = 'disaster_operator';
+      var lastPayload = null;
+      var currentModal = { kind: '', sessionId: '', employeeId: '' };
+
       var LS_URL = 'disaster_gas_webapp_url';
       var LS_SID = 'disaster_session_id';
 
       var gasUrl = document.getElementById('gasUrl');
+      var operatorEl = document.getElementById('operator');
       var sessionId = document.getElementById('sessionId');
       var btnLoad = document.getElementById('btnLoad');
       var btnSave = document.getElementById('btnSave');
@@ -159,11 +208,17 @@
 
       gasUrl.value = localStorage.getItem(LS_URL) || '';
       sessionId.value = localStorage.getItem(LS_SID) || '';
+      operatorEl.value = localStorage.getItem(LS_OPERATOR) || '';
 
       btnSave.addEventListener('click', function () {
         localStorage.setItem(LS_URL, gasUrl.value.trim());
         localStorage.setItem(LS_SID, sessionId.value.trim());
+        localStorage.setItem(LS_OPERATOR, operatorEl.value.trim());
         showMsg('保存しました。', 'ok');
+      });
+
+      operatorEl.addEventListener('change', function () {
+        localStorage.setItem(LS_OPERATOR, operatorEl.value.trim());
       });
 
       function buildFetchUrl(base, sid) {
@@ -177,6 +232,15 @@
         return ((100 * a) / t).toFixed(1);
       }
 
+      function heatColorByRate(rate) {
+        var r = Number(rate || 0);
+        if (r >= 90) return 'bg-emerald-50 border-emerald-200 text-emerald-900';
+        if (r >= 75) return 'bg-lime-50 border-lime-200 text-lime-900';
+        if (r >= 60) return 'bg-amber-50 border-amber-200 text-amber-900';
+        if (r >= 40) return 'bg-orange-50 border-orange-200 text-orange-900';
+        return 'bg-red-50 border-red-200 text-red-900';
+      }
+
       function render(data) {
         if (data.error) {
           showMsg('API: ' + data.error + (data.hint ? ' — ' + data.hint : ''), 'error');
@@ -186,6 +250,7 @@
 
         hideMsg();
         dashboard.classList.remove('hidden');
+        lastPayload = data;
 
         document.getElementById('sessionTitle').textContent = data.session && data.session.title ? data.session.title : '（タイトルなし）';
         var meta = [];
@@ -193,6 +258,7 @@
         if (data.session && data.session.status) meta.push('状態: ' + data.session.status);
         if (data.session && data.session.targetCountSheet !== '' && data.session.targetCountSheet != null)
           meta.push('シート上の対象人数: ' + data.session.targetCountSheet);
+        if (data.session && data.session.dueAt) meta.push('回答期限: ' + data.session.dueAt);
         document.getElementById('sessionMeta').textContent = meta.join(' · ');
         document.getElementById('loadedAt').textContent = '取得: ' + new Date().toLocaleString('ja-JP');
 
@@ -242,7 +308,7 @@
           byStatusEl.appendChild(li);
         });
 
-        function listPeople(ul, items, emptyText, accent) {
+        function listPeople(ul, items, emptyText, accent, overdue, sessionIdStr, kind) {
           ul.innerHTML = '';
           if (!items || !items.length) {
             var li = document.createElement('li');
@@ -253,21 +319,72 @@
           }
           items.forEach(function (p) {
             var li = document.createElement('li');
-            li.className =
-              'flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm ' +
-              (accent === 'red'
-                ? 'border-red-100 bg-white text-slate-900'
-                : 'border-slate-100 bg-slate-50 text-slate-900');
-            li.innerHTML =
-              '<span><span class="font-semibold">' +
-              (p.name || '（氏名なし）') +
+            if (accent === 'red') {
+              var btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className =
+                'group flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-left text-sm text-slate-900 shadow-sm hover:bg-red-100/60 focus:outline-none focus:ring-2 focus:ring-red-600/50';
+              var contact = getContactState_(p);
+              var isDone = contact && contact.ambulance && contact.emergency;
+              var isWorking = !isDone && String(p.current_owner || '').trim();
+              var badge = isDone
+                ? '<span class="ml-2 inline-flex items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-bold text-white">連絡済み</span>'
+                : isWorking
+                  ? '<span class="ml-2 inline-flex items-center rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white">対応中</span>'
+                  : '';
+              btn.innerHTML =
+                '<span class="min-w-0">' +
+                '<span class="font-semibold">' +
+                escapeHtml(p.name || '（氏名なし）') +
+                '</span> <span class="text-xs text-slate-500">' +
+                escapeHtml(p.department || '') +
+                '</span>' +
+                (p.office ? '<span class="ml-1 text-[10px] font-semibold text-slate-500">· ' + escapeHtml(p.office) + '</span>' : '') +
+                badge +
+                (p.comment ? '<span class="mt-1 block text-xs text-slate-600">' + escapeHtml(p.comment) + '</span>' : '') +
+                '</span>' +
+                '<span class="shrink-0 text-xs text-slate-400">' +
+                escapeHtml(p.employeeId || '') +
+                '</span>';
+              btn.addEventListener('click', function () {
+                openNeedHelpModal(p, sessionIdStr);
+              });
+              li.appendChild(btn);
+              ul.appendChild(li);
+              return;
+            }
+
+            var isOver = !!overdue;
+            var btn2 = document.createElement('button');
+            btn2.type = 'button';
+            btn2.className =
+              'group flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm text-slate-900 ' +
+              (isOver
+                ? 'border-red-200 bg-white shadow-sm hover:bg-red-100/60 focus:outline-none focus:ring-2 focus:ring-red-600/50'
+                : 'border-slate-100 bg-slate-50 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-500/20');
+            var contact2 = isOver ? getContactState_(p) : null;
+            var isDone2 = contact2 && contact2.ambulance && contact2.emergency;
+            var isWorking2 = isOver && !isDone2 && String(p.current_owner || '').trim();
+            var badge2 = isDone2
+              ? '<span class="ml-2 inline-flex items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-bold text-white">連絡済み</span>'
+              : isWorking2
+                ? '<span class="ml-2 inline-flex items-center rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white">対応中</span>'
+                : '';
+            btn2.innerHTML =
+              '<span class="min-w-0"><span class="font-semibold">' +
+              escapeHtml(p.name || '（氏名なし）') +
               '</span> <span class="text-xs text-slate-500">' +
-              (p.department || '') +
+              escapeHtml(p.department || '') +
               '</span>' +
-              (p.comment ? '<span class="mt-1 block text-xs text-slate-600">' + escapeHtml(p.comment) + '</span>' : '') +
-              '</span><span class="text-xs text-slate-400">' +
-              (p.employeeId || '') +
+              (p.office ? '<span class="ml-1 text-[10px] font-semibold text-slate-500">· ' + escapeHtml(p.office) + '</span>' : '') +
+              (isOver ? badge2 : '') +
+              '</span><span class="shrink-0 text-xs text-slate-400">' +
+              escapeHtml(p.employeeId || '') +
               '</span>';
+            btn2.addEventListener('click', function () {
+              openNoResponseModal(p, isOver, data.session && data.session.dueAt ? String(data.session.dueAt) : '');
+            });
+            li.appendChild(btn2);
             ul.appendChild(li);
           });
         }
@@ -278,13 +395,72 @@
           return d.innerHTML;
         }
 
-        listPeople(document.getElementById('needHelpList'), data.needHelpList, '該当者はいません', 'red');
-        listPeople(
-          document.getElementById('noResponseList'),
-          data.noResponseList,
-          '未回答はいません',
-          'slate'
-        );
+        listPeople(document.getElementById('needHelpList'), data.needHelpList, '該当者はいません', 'red', false, String(data.sessionId || ''), 'need_help');
+
+        var dueStr = data.session && data.session.dueAt ? String(data.session.dueAt) : '';
+        var dueMs = dueStr ? Date.parse(dueStr.replace(' ', 'T')) : NaN;
+        var overdue = !!dueStr && !isNaN(dueMs) && Date.now() > dueMs;
+        var noSec = document.getElementById('noResponseSection');
+        var noTitle = document.getElementById('noResponseTitle');
+        var noHint = document.getElementById('noResponseDueHint');
+        if (dueStr) noHint.textContent = '期限: ' + dueStr + (overdue ? '（期限超過）' : '');
+        else noHint.textContent = '';
+        if (overdue) {
+          noSec.className = 'rounded-2xl border border-red-300 bg-red-100/50 p-5 shadow-sm';
+          noTitle.className = 'text-sm font-bold text-red-950';
+          noHint.className = 'text-xs font-bold text-red-900';
+        } else {
+          noSec.className = 'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm';
+          noTitle.className = 'text-sm font-bold text-slate-800';
+          noHint.className = 'text-xs text-slate-500';
+        }
+
+        var noAll = data.noResponseList || [];
+        var preview = noAll.slice(0, NO_RESPONSE_PREVIEW_LIMIT);
+        listPeople(document.getElementById('noResponseList'), preview, '未回答はいません', 'slate', overdue, String(data.sessionId || ''), 'no_response');
+
+        var moreWrap = document.getElementById('noResponseMoreWrap');
+        var btnAll = document.getElementById('btnNoResponseAll');
+        if (noAll.length > NO_RESPONSE_PREVIEW_LIMIT) {
+          moreWrap.classList.remove('hidden');
+          btnAll.textContent = '未回答者を開く（全 ' + String(noAll.length) + ' 名）';
+          btnAll.onclick = function () {
+            openNoResponseListModal(noAll, overdue, dueStr);
+          };
+        } else {
+          moreWrap.classList.add('hidden');
+          btnAll.onclick = null;
+        }
+
+        var byOfficeEl = document.getElementById('byOffice');
+        byOfficeEl.innerHTML = '';
+        (data.byOffice || []).forEach(function (o) {
+          var card = document.createElement('div');
+          var klass = heatColorByRate(o.rate);
+          card.className = 'rounded-xl border p-3 ' + klass;
+          card.innerHTML =
+            '<div class="flex items-baseline justify-between gap-3">' +
+            '<div class="min-w-0">' +
+            '<p class="truncate text-xs font-semibold opacity-80">' +
+            escapeHtml(o.office || '（未設定）') +
+            '</p>' +
+            '<p class="mt-0.5 text-[11px] opacity-70">' +
+            '回答 ' +
+            String(o.answered || 0) +
+            ' / ' +
+            String(o.total || 0) +
+            '</p>' +
+            '</div>' +
+            '<p class="shrink-0 text-2xl font-bold tabular-nums tracking-tight">' +
+            String(o.rate != null ? o.rate : '0') +
+            '<span class="ml-0.5 text-sm font-semibold opacity-80">%</span></p>' +
+            '</div>' +
+            '<div class="mt-2 h-2 overflow-hidden rounded-full bg-white/60">' +
+            '<div class="h-full rounded-full bg-slate-900/60" style="width:' +
+            Math.max(0, Math.min(100, Number(o.rate || 0))) +
+            '%"></div></div>';
+          byOfficeEl.appendChild(card);
+        });
 
         var deptEl = document.getElementById('byDepartment');
         deptEl.innerHTML = '';
@@ -308,6 +484,363 @@
         });
 
         showMsg('集計を表示しました。', 'ok');
+      }
+
+      var modal = null;
+      var listModal = null;
+
+      function getContactState_(obj) {
+        if (!obj || !obj.checklist) return { ambulance: false, emergency: false };
+        return { ambulance: !!obj.checklist.ambulance, emergency: !!obj.checklist.emergency };
+      }
+
+      function refreshBadges_() {
+        if (!lastPayload) return;
+        render(lastPayload);
+      }
+
+      function updateChecklistHint_() {
+        if (!modal) return;
+        var hint = modal.querySelector('#mChecklistHint');
+        if (!hint) return;
+        var st = getContactState_(currentModal.payloadObj);
+        if (st.ambulance && st.emergency) {
+          hint.textContent = '救急・緊急連絡先へ連絡済み';
+          hint.className = 'text-[11px] font-bold text-red-800';
+        } else {
+          hint.textContent = '未完了';
+          hint.className = 'text-[11px] font-semibold text-slate-500';
+        }
+      }
+
+      function ensureModal() {
+        if (modal) return modal;
+        modal = document.createElement('div');
+        modal.className = 'fixed inset-0 z-50 hidden';
+        modal.innerHTML =
+          '<div class="absolute inset-0 bg-slate-900/40"></div>' +
+          '<div class="absolute inset-0 flex items-end justify-center p-3 sm:items-center">' +
+          '<div class="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">' +
+          '<div class="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">' +
+          '<div>' +
+          '<p class="text-xs font-semibold text-red-700" id="mKind">要救護（詳細）</p>' +
+          '<p class="mt-0.5 text-lg font-bold text-slate-900" id="mName">—</p>' +
+          '<p class="mt-0.5 text-xs text-slate-500" id="mMeta">—</p>' +
+          '</div>' +
+          '<button type="button" id="mClose" class="rounded-lg px-2 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-100">閉じる</button>' +
+          '</div>' +
+          '<div class="px-5 py-4 text-sm">' +
+          '<div class="rounded-xl border border-slate-200 bg-white p-3" id="mChecklistWrap">' +
+          '<p class="text-[10px] font-bold text-slate-500">対応チェック</p>' +
+          '<div class="mt-2 space-y-2">' +
+          '<label class="flex items-center gap-2 text-sm font-semibold text-slate-900"><input id="chkAmbulance" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-600" />救急へ連絡</label>' +
+          '<label class="flex items-center gap-2 text-sm font-semibold text-slate-900"><input id="chkEmergency" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-600" />緊急連絡先への連絡</label>' +
+          '<p class="text-[11px] font-semibold text-slate-500" id="mChecklistHint"></p>' +
+          '</div>' +
+          '</div>' +
+          '<div class="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3" id="mOwnerWrap">' +
+          '<p class="text-[10px] font-bold text-slate-500">担当</p>' +
+          '<p class="mt-1 text-sm font-semibold text-slate-900" id="mOwnerLine">—</p>' +
+          '<div class="mt-2 flex flex-wrap gap-2">' +
+          '<button type="button" id="btnTake" class="hidden rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-950">担当する</button>' +
+          '<button type="button" id="btnHandover" class="hidden rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700">引き継ぎ</button>' +
+          '</div>' +
+          '</div>' +
+          '<div class="grid gap-3 sm:grid-cols-2">' +
+          '<div class="rounded-xl border border-slate-200 bg-slate-50 p-3"><p class="text-[10px] font-bold text-slate-500">配属先</p><p class="mt-1 font-semibold text-slate-900" id="mDept">—</p></div>' +
+          '<div class="rounded-xl border border-slate-200 bg-slate-50 p-3"><p class="text-[10px] font-bold text-slate-500">拠点</p><p class="mt-1 font-semibold text-slate-900" id="mOffice">—</p></div>' +
+          '<div class="rounded-xl border border-slate-200 bg-slate-50 p-3"><p class="text-[10px] font-bold text-slate-500">連絡先</p><p class="mt-1 font-semibold text-slate-900" id="mPhone">—</p></div>' +
+          '<div class="rounded-xl border border-slate-200 bg-slate-50 p-3"><p class="text-[10px] font-bold text-slate-500">緊急連絡先</p><p class="mt-1 font-semibold text-slate-900" id="mEmergency">—</p></div>' +
+          '</div>' +
+          '<div class="mt-3 rounded-xl border border-slate-200 bg-white p-3">' +
+          '<p class="text-[10px] font-bold text-slate-500">コメント</p>' +
+          '<p class="mt-1 whitespace-pre-wrap text-slate-900" id="mComment">—</p>' +
+          '</div>' +
+          '<div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">' +
+          '<span id="mAnsweredAt">—</span>' +
+          '<span id="mChannel">—</span>' +
+          '</div>' +
+          '</div>' +
+          '</div>' +
+          '</div>';
+        document.body.appendChild(modal);
+        modal.querySelector('#mClose').addEventListener('click', closeNeedHelpModal);
+        modal.addEventListener('click', function (ev) {
+          if (ev.target === modal.firstChild) closeNeedHelpModal();
+        });
+        modal.querySelector('#chkAmbulance').addEventListener('change', function () {
+          if (!currentModal.sessionId || !currentModal.employeeId || !currentModal.kind) return;
+          postUpdateChecklist_({ ambulance_called: !!this.checked });
+        });
+        modal.querySelector('#chkEmergency').addEventListener('change', function () {
+          if (!currentModal.sessionId || !currentModal.employeeId || !currentModal.kind) return;
+          postUpdateChecklist_({ emergency_contact_called: !!this.checked });
+        });
+        modal.querySelector('#btnTake').addEventListener('click', function () {
+          postAssign_('take');
+        });
+        modal.querySelector('#btnHandover').addEventListener('click', function () {
+          postAssign_('handover');
+        });
+        return modal;
+      }
+
+      function openNeedHelpModal(p, sessionIdStr) {
+        ensureModal();
+        currentModal.kind = 'need_help';
+        currentModal.sessionId = String(sessionIdStr || '');
+        currentModal.employeeId = String(p.employeeId || '');
+        currentModal.payloadObj = p;
+        modal.querySelector('#mKind').textContent = '要救護（詳細）';
+        modal.querySelector('#mKind').className = 'text-xs font-semibold text-red-700';
+        modal.querySelector('#mName').textContent = p.name || '（氏名なし）';
+        modal.querySelector('#mMeta').textContent = (p.employeeId ? '社員番号: ' + p.employeeId : '') + (p.response_channel ? ' · ' + p.response_channel : '');
+        modal.querySelector('#mDept').textContent = p.department || '—';
+        modal.querySelector('#mOffice').textContent = p.office || '—';
+        modal.querySelector('#mPhone').textContent = p.phone || '—';
+        modal.querySelector('#mEmergency').textContent = p.emergency_contact || '—';
+        modal.querySelector('#mComment').textContent = p.comment || '—';
+        modal.querySelector('#mAnsweredAt').textContent = p.answeredAt ? '回答: ' + p.answeredAt : '';
+        modal.querySelector('#mChannel').textContent = p.response_channel ? 'チャネル: ' + p.response_channel : '';
+        var st = getContactState_(p);
+        modal.querySelector('#chkAmbulance').checked = !!st.ambulance;
+        modal.querySelector('#chkEmergency').checked = !!st.emergency;
+        modal.querySelector('#mChecklistWrap').classList.remove('hidden');
+        updateChecklistHint_();
+        updateOwnerUi_(p);
+        modal.classList.remove('hidden');
+      }
+
+      function openNoResponseModal(p, overdue, dueStr) {
+        ensureModal();
+        currentModal.sessionId = lastPayload && lastPayload.sessionId ? String(lastPayload.sessionId) : '';
+        currentModal.employeeId = String(p.employeeId || '');
+        currentModal.kind = overdue ? 'no_response' : '';
+        currentModal.payloadObj = p;
+        modal.querySelector('#mKind').textContent = overdue ? '未回答（期限超過）' : '未回答（詳細）';
+        modal.querySelector('#mKind').className = overdue ? 'text-xs font-semibold text-red-700' : 'text-xs font-semibold text-slate-700';
+        modal.querySelector('#mName').textContent = p.name || '（氏名なし）';
+        modal.querySelector('#mMeta').textContent = p.employeeId ? '社員番号: ' + p.employeeId : '';
+        modal.querySelector('#mDept').textContent = p.department || '—';
+        modal.querySelector('#mOffice').textContent = p.office || '—';
+        modal.querySelector('#mPhone').textContent = p.phone || '—';
+        modal.querySelector('#mEmergency').textContent = p.emergency_contact || '—';
+        modal.querySelector('#mComment').textContent = overdue && dueStr ? '回答期限: ' + dueStr + '（期限超過）' : '—';
+        modal.querySelector('#mAnsweredAt').textContent = '';
+        modal.querySelector('#mChannel').textContent = '';
+        if (overdue) {
+          var st2 = getContactState_(p);
+          modal.querySelector('#chkAmbulance').checked = !!st2.ambulance;
+          modal.querySelector('#chkEmergency').checked = !!st2.emergency;
+          modal.querySelector('#mChecklistWrap').classList.remove('hidden');
+          updateChecklistHint_();
+          updateOwnerUi_(p);
+        } else {
+          modal.querySelector('#mChecklistWrap').classList.add('hidden');
+          modal.querySelector('#mOwnerWrap').classList.add('hidden');
+        }
+        modal.classList.remove('hidden');
+      }
+
+      function updateOwnerUi_(p) {
+        if (!modal) return;
+        var wrap = modal.querySelector('#mOwnerWrap');
+        var line = modal.querySelector('#mOwnerLine');
+        var btnTake = modal.querySelector('#btnTake');
+        var btnHandover = modal.querySelector('#btnHandover');
+        var me = String((operatorEl && operatorEl.value) || '').trim();
+        var def = String(p.default_owner || '').trim();
+        var cur = String(p.current_owner || '').trim();
+        var upd = (p.updatedBy || p.updatedAt) ? '更新: ' + String(p.updatedBy || '') + ' ' + String(p.updatedAt || '') : '';
+        line.textContent = '既定: ' + (def || '—') + ' / 担当中: ' + (cur || '未割当') + (upd ? ' / ' + upd : '');
+        wrap.classList.remove('hidden');
+        btnTake.classList.add('hidden');
+        btnHandover.classList.add('hidden');
+        if (!me) return;
+        if (!cur) btnTake.classList.remove('hidden');
+        else if (cur !== me) btnHandover.classList.remove('hidden');
+      }
+
+      function postJson_(url, payload) {
+        /** GAS は JSON POST だと preflight（OPTIONS）で落ちやすいのでフォーム形式で送る */
+        var params = new URLSearchParams();
+        Object.keys(payload || {}).forEach(function (k) {
+          var v = payload[k];
+          if (v === undefined || v === null) return;
+          params.append(k, String(v));
+        });
+        return fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: params.toString(),
+        }).then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        });
+      }
+
+      function ensureOperator_() {
+        var op = String((operatorEl && operatorEl.value) || '').trim();
+        if (!op) {
+          alert('管理者名（共有ログ用）を入力してください。');
+          throw new Error('missing_operator');
+        }
+        return op;
+      }
+
+      function postAssign_(mode) {
+        var op = ensureOperator_();
+        var btnTake = modal ? modal.querySelector('#btnTake') : null;
+        var btnHandover = modal ? modal.querySelector('#btnHandover') : null;
+        if (btnTake) {
+          btnTake.disabled = true;
+          btnTake.textContent = '担当中…';
+          btnTake.classList.add('opacity-60');
+        }
+        if (btnHandover) {
+          btnHandover.disabled = true;
+          btnHandover.textContent = '引き継ぎ中…';
+          btnHandover.classList.add('opacity-60');
+        }
+        var note = '';
+        if (mode === 'handover') {
+          var cur = String((currentModal.payloadObj && currentModal.payloadObj.current_owner) || '').trim();
+          note = prompt('引き継ぎメモ（任意）\n現在: ' + (cur || '未割当') + ' → ' + op, '') || '';
+        }
+        var base = (gasUrl && gasUrl.value ? gasUrl.value.trim() : '').split('?')[0];
+        return postJson_(base, {
+          action: 'assign',
+          sessionId: currentModal.sessionId,
+          employeeId: currentModal.employeeId,
+          caseType: currentModal.kind,
+          operator: op,
+          handover_note: note,
+        })
+          .then(function (d) {
+            if (!d.ok) throw new Error(d.error || 'assign_failed');
+            btnLoad.click();
+          })
+          .catch(function (e) {
+            console.error(e);
+            alert('更新に失敗しました: ' + e.message);
+            if (btnTake) {
+              btnTake.disabled = false;
+              btnTake.textContent = '担当する';
+              btnTake.classList.remove('opacity-60');
+            }
+            if (btnHandover) {
+              btnHandover.disabled = false;
+              btnHandover.textContent = '引き継ぎ';
+              btnHandover.classList.remove('opacity-60');
+            }
+          });
+      }
+
+      function postUpdateChecklist_(partial) {
+        var op = ensureOperator_();
+        var base = (gasUrl && gasUrl.value ? gasUrl.value.trim() : '').split('?')[0];
+        var payload = {
+          action: 'updateChecklist',
+          sessionId: currentModal.sessionId,
+          employeeId: currentModal.employeeId,
+          caseType: currentModal.kind,
+          operator: op,
+        };
+        if (partial.ambulance_called !== undefined) payload.ambulance_called = partial.ambulance_called;
+        if (partial.emergency_contact_called !== undefined)
+          payload.emergency_contact_called = partial.emergency_contact_called;
+        return postJson_(base, payload)
+          .then(function (d) {
+            if (!d.ok) throw new Error(d.error || 'checklist_failed');
+            btnLoad.click();
+          })
+          .catch(function (e) {
+            console.error(e);
+            alert('更新に失敗しました: ' + e.message);
+          });
+      }
+
+      function closeNeedHelpModal() {
+        if (!modal) return;
+        modal.classList.add('hidden');
+      }
+
+      function ensureListModal() {
+        if (listModal) return listModal;
+        listModal = document.createElement('div');
+        listModal.className = 'fixed inset-0 z-50 hidden';
+        listModal.innerHTML =
+          '<div class="absolute inset-0 bg-slate-900/40"></div>' +
+          '<div class="absolute inset-0 flex items-end justify-center p-3 sm:items-center">' +
+          '<div class="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">' +
+          '<div class="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">' +
+          '<div>' +
+          '<p class="text-xs font-semibold" id="lKind">未回答者</p>' +
+          '<p class="mt-0.5 text-lg font-bold text-slate-900" id="lTitle">—</p>' +
+          '<p class="mt-0.5 text-xs text-slate-500" id="lHint">—</p>' +
+          '</div>' +
+          '<button type="button" id="lClose" class="rounded-lg px-2 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-100">閉じる</button>' +
+          '</div>' +
+          '<div class="max-h-[70vh] overflow-auto px-5 py-4">' +
+          '<ul class="space-y-2" id="lList"></ul>' +
+          '</div>' +
+          '</div>' +
+          '</div>';
+        document.body.appendChild(listModal);
+        listModal.querySelector('#lClose').addEventListener('click', closeNoResponseListModal);
+        listModal.addEventListener('click', function (ev) {
+          if (ev.target === listModal.firstChild) closeNoResponseListModal();
+        });
+        return listModal;
+      }
+
+      function openNoResponseListModal(items, overdue, dueStr) {
+        ensureListModal();
+        listModal.querySelector('#lKind').textContent = overdue ? '未回答（期限超過）' : '未回答';
+        listModal.querySelector('#lKind').className = overdue ? 'text-xs font-semibold text-red-700' : 'text-xs font-semibold text-slate-700';
+        listModal.querySelector('#lTitle').textContent = '未回答者一覧（' + String((items || []).length) + ' 名）';
+        listModal.querySelector('#lHint').textContent = dueStr ? '回答期限: ' + dueStr + (overdue ? '（期限超過）' : '') : '';
+
+        var ul = listModal.querySelector('#lList');
+        ul.innerHTML = '';
+        (items || []).forEach(function (p) {
+          var li = document.createElement('li');
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className =
+            'group flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm text-slate-900 ' +
+            (overdue
+              ? 'border-red-200 bg-white shadow-sm hover:bg-red-100/60 focus:outline-none focus:ring-2 focus:ring-red-600/50'
+              : 'border-slate-100 bg-slate-50 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-500/20');
+          var contact = overdue ? getContactState_(String(lastPayload && lastPayload.sessionId ? lastPayload.sessionId : ''), String(p.employeeId || ''), 'no_response') : null;
+          var doneBadge =
+            contact && contact.ambulance && contact.emergency
+              ? '<span class="ml-2 inline-flex items-center rounded-full bg-red-700 px-2 py-0.5 text-[10px] font-bold text-white">連絡済み</span>'
+              : '';
+          btn.innerHTML =
+            '<span class="min-w-0"><span class="font-semibold">' +
+            (p.name ? escapeHtml(p.name) : '（氏名なし）') +
+            '</span> <span class="text-xs text-slate-500">' +
+            escapeHtml(p.department || '') +
+            '</span>' +
+            (p.office ? '<span class="ml-1 text-[10px] font-semibold text-slate-500">· ' + escapeHtml(p.office) + '</span>' : '') +
+            (overdue ? doneBadge : '') +
+            '</span><span class="shrink-0 text-xs text-slate-400">' +
+            escapeHtml(p.employeeId || '') +
+            '</span>';
+          btn.addEventListener('click', function () {
+            openNoResponseModal(p, overdue, dueStr || '');
+          });
+          li.appendChild(btn);
+          ul.appendChild(li);
+        });
+
+        listModal.classList.remove('hidden');
+      }
+
+      function closeNoResponseListModal() {
+        if (!listModal) return;
+        listModal.classList.add('hidden');
       }
 
       btnLoad.addEventListener('click', function () {
