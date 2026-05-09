@@ -13,7 +13,14 @@ var SHEET_RESPONSES = 'レスポンス';
 var SHEET_TOKENS = '回答トークン';
 /** 管理者の「発信」履歴を残す（無ければ自動作成） */
 var SHEET_BROADCASTS = '発信ログ';
-/** 実際の送信処理は未実装のため、配布対象のキューを残す */
+/**
+ * 配布対象キュー（メール/LINE 送信の出発点）。送信処理はこのシートを読む。
+ *
+ * 送信方針（無料枠・手動再送）:
+ * - メール・LINE とも「無料枠の範囲内」だけ送る。残量不足や上限エラーが出たらそれ以上送らず処理を止める（有料枠へは進めない）。
+ * - 失敗した行は自動再送しない（上限の浪費・ループを避ける）。キューを failed 等にし、手動で確認・再送する。
+ * 実装側は OUTBOX_SEND_ONLY_WITHIN_FREE_TIER / OUTBOX_NO_AUTO_RETRY を参照すること。
+ */
 var SHEET_OUTBOX = '配布キュー';
 /** 複数管理者で共有する「担当・対応チェック」 */
 var SHEET_ASSIGNMENTS = '対応アサイン';
@@ -22,6 +29,32 @@ var SHEET_ASSIGNMENTS = '対応アサイン';
  * false: 検証しやすいよう何度でも送信できる（課題・動作確認向け）。
  */
 var TOKEN_MARK_USED_AFTER_SAVE = false;
+
+/**
+ * true: メール/LINE は無料枠に収まる分だけ送る。事前の残量チェックや API の上限応答で「これ以上送れない」と分かったら打ち切る。
+ * false にした場合のみ、枠外まで送る実装が許容される（本プロジェクトでは想定しない）。
+ */
+var OUTBOX_SEND_ONLY_WITHIN_FREE_TIER = true;
+
+/**
+ * true: 送信失敗時にキューを自動リトライしない。管理者が内容・上限を確認してから手動で送り直す。
+ */
+var OUTBOX_NO_AUTO_RETRY = true;
+
+/**
+ * 配布キューからのメール一括送信: 1回の実行で処理する最大行数（queued のみ）。
+ * Gmail の無料枠・6分実行上限を考慮し控えめにしておく。
+ */
+var OUTBOX_EMAIL_MAX_PER_RUN = 50;
+
+/**
+ * スクリプトタイムゾーンの「同一日」に送れる通数の上限。超えたらそれ以上送らず終了（有料化やブロックを避ける）。
+ * 個人 Gmail は公式でも日次上限が厳しめのため、余裕を見て低めに設定すること。
+ */
+var OUTBOX_EMAIL_MAX_PER_DAY = 80;
+
+/** 連投でレート制限になりにくいよう、各送信のあとに空けるミリ秒（0 で無効） */
+var OUTBOX_EMAIL_SLEEP_MS = 400;
 
 /** README 準拠の status 値 */
 var STATUS_KEYS = ['safe', 'minor_injury', 'need_help', 'other'];
@@ -798,7 +831,11 @@ function writeOutbox_(ss, sessionIdStr, title, body, links) {
     'title',
     'body',
     'status',
+    'mail_error',
+    'mail_sent_at',
   ]);
+
+  ensureOutboxMailMetaColumns_(sh);
 
   /** 今回セッション分の既存キューを削除して入れ替え */
   var values = sh.getDataRange().getValues();
@@ -840,10 +877,216 @@ function writeOutbox_(ss, sessionIdStr, title, body, links) {
       title || '',
       body || '',
       'queued',
+      '',
+      '',
     ]);
     count++;
   });
   return count;
+}
+
+/**
+ * 既存の「配布キュー」に mail_error / mail_sent_at 列が無い場合だけ 1 行目に追加する。
+ */
+function ensureOutboxMailMetaColumns_(sh) {
+  var lastCol = Math.max(sh.getLastColumn(), 1);
+  var headers = sh.getRange(1, 1, 1, lastCol)
+    .getValues()[0]
+    .map(function (h) {
+      return String(h).trim();
+    });
+  var cErr = headerIndex_(headers, ['mail_error', 'メール送信エラー']);
+  var cAt = headerIndex_(headers, ['mail_sent_at', 'メール送信日時']);
+  var appendAt = lastCol;
+  if (cErr < 0) {
+    appendAt++;
+    sh.getRange(1, appendAt).setValue('mail_error');
+    headers.push('mail_error');
+    cErr = headers.length - 1;
+  }
+  if (cAt < 0) {
+    appendAt++;
+    sh.getRange(1, appendAt).setValue('mail_sent_at');
+  }
+}
+
+var PROP_OUTBOX_EMAIL_DAY_ = 'OUTBOX_EMAIL_SENT_DAY';
+var PROP_OUTBOX_EMAIL_COUNT_ = 'OUTBOX_EMAIL_SENT_COUNT';
+
+function todayKeyForQuota_() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function getOutboxEmailSentCountToday_() {
+  var props = PropertiesService.getScriptProperties();
+  var day = todayKeyForQuota_();
+  if (props.getProperty(PROP_OUTBOX_EMAIL_DAY_) !== day) return 0;
+  var n = parseInt(String(props.getProperty(PROP_OUTBOX_EMAIL_COUNT_) || '0'), 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function addOutboxEmailSentCountToday_(delta) {
+  var props = PropertiesService.getScriptProperties();
+  var day = todayKeyForQuota_();
+  if (props.getProperty(PROP_OUTBOX_EMAIL_DAY_) !== day) {
+    props.setProperty(PROP_OUTBOX_EMAIL_DAY_, day);
+    props.setProperty(PROP_OUTBOX_EMAIL_COUNT_, String(Math.max(0, delta)));
+    return;
+  }
+  var cur = getOutboxEmailSentCountToday_();
+  props.setProperty(PROP_OUTBOX_EMAIL_COUNT_, String(cur + Math.max(0, delta)));
+}
+
+/**
+ * 指定セッションの配布キュー（status が queued）に対し、MailApp でメール送信する。
+ * OUTBOX_SEND_ONLY_WITHIN_FREE_TIER が true のとき、日次・1回あたりの上限を超えたら送らず打ち切る。
+ * 失敗行は email_failed とし自動再送しない（OUTBOX_NO_AUTO_RETRY）。
+ *
+ * @param {string} sessionIdStr セッション ID（例: 202605）
+ * @returns {{ ok: boolean, sent: number, failed: number, skipped: number, stopped_reason?: string, errors?: string[] }}
+ */
+function processOutboxEmail_(sessionIdStr) {
+  if (!OUTBOX_SEND_ONLY_WITHIN_FREE_TIER) {
+    /** プロジェクト方針では常に true。false の場合は上限なしで送る（非推奨） */
+  }
+  sessionIdStr = String(sessionIdStr || '').trim();
+  if (!sessionIdStr) throw new Error('sessionId が空です');
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(SHEET_OUTBOX);
+  if (!sh) throw new Error('シートがありません: ' + SHEET_OUTBOX);
+
+  ensureOutboxMailMetaColumns_(sh);
+
+  var range = sh.getDataRange();
+  var values = range.getValues();
+  if (values.length < 2) return { ok: true, sent: 0, failed: 0, skipped: 0, stopped_reason: 'no_rows' };
+
+  var headers = values[0].map(function (h) {
+    return String(h).trim();
+  });
+  var cSid = headerIndex_(headers, ['session_id', 'セッションID', 'session_ID', 'sessionId']);
+  var cEmail = headerIndex_(headers, ['email', 'メール']);
+  var cTitle = headerIndex_(headers, ['title', '件名']);
+  var cBody = headerIndex_(headers, ['body', '本文']);
+  var cUrl = headerIndex_(headers, ['respond_url', '回答URL']);
+  var cStatus = headerIndex_(headers, ['status', '状態']);
+  var cErr = headerIndex_(headers, ['mail_error', 'メール送信エラー']);
+  var cAt = headerIndex_(headers, ['mail_sent_at', 'メール送信日時']);
+  if (cSid < 0 || cEmail < 0 || cUrl < 0 || cStatus < 0) throw new Error('配布キューに必要な列がありません（session_id / email / respond_url / status）');
+
+  var sent = 0;
+  var failed = 0;
+  var skipped = 0;
+  var errors = [];
+  var processed = 0;
+  var stoppedReason = '';
+
+  for (var r = 1; r < values.length; r++) {
+    if (processed >= OUTBOX_EMAIL_MAX_PER_RUN) {
+      stoppedReason = 'max_per_run';
+      break;
+    }
+    var row = values[r];
+    if (String(row[cSid] || '').trim() !== sessionIdStr) continue;
+    var st = String(row[cStatus] || '').trim().toLowerCase();
+    if (st !== 'queued') continue;
+
+    processed++;
+
+    if (OUTBOX_SEND_ONLY_WITHIN_FREE_TIER && getOutboxEmailSentCountToday_() >= OUTBOX_EMAIL_MAX_PER_DAY) {
+      stoppedReason = 'max_per_day';
+      errors.push('本日の送信上限（' + OUTBOX_EMAIL_MAX_PER_DAY + '通）に達したため中止しました');
+      break;
+    }
+
+    var to = String(row[cEmail] || '').trim();
+    var url = String(row[cUrl] || '').trim();
+    var subj = cTitle >= 0 ? String(row[cTitle] || '').trim() : '';
+    var bodyText = cBody >= 0 ? String(row[cBody] || '').trim() : '';
+    if (!subj) subj = '【安否確認】回答のお願い';
+
+    if (!to || !isPlausibleEmail_(to)) {
+      skipped++;
+      sh.getRange(r + 1, cStatus + 1).setValue('email_skipped_no_address');
+      if (cErr >= 0) sh.getRange(r + 1, cErr + 1).setValue('メールアドレスが空、または形式が不正です');
+      continue;
+    }
+
+    if (!url) {
+      skipped++;
+      sh.getRange(r + 1, cStatus + 1).setValue('email_skipped_no_address');
+      if (cErr >= 0) sh.getRange(r + 1, cErr + 1).setValue('回答URL（respond_url）が空です');
+      continue;
+    }
+
+    var mailBody =
+      (bodyText ? bodyText + '\n\n' : '') +
+      '以下のURLから回答してください。\n' +
+      url +
+      '\n\n----\nセッション: ' +
+      sessionIdStr;
+
+    try {
+      MailApp.sendEmail({ to: to, subject: subj, body: mailBody });
+      sh.getRange(r + 1, cStatus + 1).setValue('email_sent');
+      if (cErr >= 0) sh.getRange(r + 1, cErr + 1).setValue('');
+      if (cAt >= 0) sh.getRange(r + 1, cAt + 1).setValue(new Date());
+      sent++;
+      if (OUTBOX_SEND_ONLY_WITHIN_FREE_TIER) addOutboxEmailSentCountToday_(1);
+      if (OUTBOX_EMAIL_SLEEP_MS > 0) Utilities.sleep(OUTBOX_EMAIL_SLEEP_MS);
+    } catch (err) {
+      failed++;
+      var msg = String(err.message || err);
+      sh.getRange(r + 1, cStatus + 1).setValue('email_failed');
+      if (cErr >= 0) sh.getRange(r + 1, cErr + 1).setValue(msg);
+      errors.push('行 ' + (r + 1) + ': ' + msg);
+      if (OUTBOX_NO_AUTO_RETRY) {
+        /** 1件失敗しても他行は続ける。日次上限は別チェック。 */
+      }
+    }
+  }
+
+  return {
+    ok: failed === 0,
+    sent: sent,
+    failed: failed,
+    skipped: skipped,
+    stopped_reason: stoppedReason || undefined,
+    errors: errors.length ? errors : undefined,
+  };
+}
+
+/** 厳密な RFC 検証ではなく、明らかな誤入力を弾く */
+function isPlausibleEmail_(s) {
+  if (!s || s.indexOf('@') < 1 || s.indexOf('@') === s.length - 1) return false;
+  if (/\s/.test(s)) return false;
+  return true;
+}
+
+/**
+ * エディタから実行: 下の SESSION_ID_FOR_OUTBOX_EMAIL を実際の ID に書き換えてから ▶ 実行。
+ * 初回は「権限を確認」でメール送信の承認が必要です。
+ */
+function runProcessOutboxEmailFromEditor() {
+  var SESSION_ID_FOR_OUTBOX_EMAIL = '202605';
+  var out = processOutboxEmail_(SESSION_ID_FOR_OUTBOX_EMAIL);
+  var summary =
+    'メール送信結果\n成功: ' +
+    out.sent +
+    ' / 失敗: ' +
+    out.failed +
+    ' / スキップ: ' +
+    out.skipped +
+    (out.stopped_reason ? '\n中止理由: ' + out.stopped_reason : '') +
+    (out.errors ? '\n' + out.errors.join('\n') : '');
+  Logger.log(JSON.stringify(out, null, 2));
+  Logger.log(summary);
+  try {
+    SpreadsheetApp.getUi().alert(summary);
+  } catch (uiErr) {
+    /** スプレッドシートを開かずエディタだけ実行した場合などはログのみ */
+  }
 }
 
 function buildDefaultOwnerMap_(targets) {
