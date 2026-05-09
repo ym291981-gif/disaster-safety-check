@@ -816,6 +816,47 @@ function parseDateish_(v) {
   return null;
 }
 
+/**
+ * 社員マスター1行（readObjects_ のオブジェクト）からメールを取り出す。
+ * ヘッダーが Email / メールアドレス 等でも拾えるようにする。
+ */
+function employeeEmailFromRow_(emp) {
+  if (!emp) return '';
+  var candidates = [
+    'email',
+    'Email',
+    'EMAIL',
+    'e-mail',
+    'E-mail',
+    'mail',
+    'Mail',
+    'メール',
+    'メールアドレス',
+    'メールアドレス（会社）',
+    '会社メール',
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var k = candidates[i];
+    if (!Object.prototype.hasOwnProperty.call(emp, k)) continue;
+    var v = emp[k];
+    if (v === undefined || v === null) continue;
+    var s = String(v).trim();
+    if (s) return s;
+  }
+  for (var key in emp) {
+    if (!Object.prototype.hasOwnProperty.call(emp, key)) continue;
+    var kn = String(key).trim();
+    var lower = kn.toLowerCase();
+    if (lower.indexOf('mail') !== -1 || kn.indexOf('メール') !== -1) {
+      var vv = emp[key];
+      if (vv === undefined || vv === null) continue;
+      var t = String(vv).trim();
+      if (t) return t;
+    }
+  }
+  return '';
+}
+
 function writeOutbox_(ss, sessionIdStr, title, body, links) {
   var sh = getOrCreateSheet_(ss, SHEET_OUTBOX, [
     'created_at',
@@ -870,7 +911,7 @@ function writeOutbox_(ss, sessionIdStr, title, body, links) {
       emp['氏名'] || emp['name'] || '',
       emp['部署'] || emp['department'] || '',
       emp['拠点'] || emp['office'] || '',
-      emp['email'] || emp['メール'] || '',
+      employeeEmailFromRow_(emp),
       emp['電話番号'] || emp['phone'] || '',
       emp['line_user_id'] || emp['LINE'] || '',
       url,
@@ -966,7 +1007,7 @@ function processOutboxEmail_(sessionIdStr) {
     return String(h).trim();
   });
   var cSid = headerIndex_(headers, ['session_id', 'セッションID', 'session_ID', 'sessionId']);
-  var cEmail = headerIndex_(headers, ['email', 'メール']);
+  var cEmail = headerIndex_(headers, ['email', 'メール', 'Email', 'MAIL', 'メールアドレス']);
   var cTitle = headerIndex_(headers, ['title', '件名']);
   var cBody = headerIndex_(headers, ['body', '本文']);
   var cUrl = headerIndex_(headers, ['respond_url', '回答URL']);
