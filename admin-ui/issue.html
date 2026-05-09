@@ -234,6 +234,8 @@
       function guessRespondUrl() {
         try {
           var u = new URL(window.location.href);
+          /** file:// で開いている場合、origin が null になり受信者が開けないURLになるので自動入力しない */
+          if (u.protocol === 'file:') return '';
           var base = u.origin + u.pathname.replace(/\/admin-ui\/issue\.html.*$/, '/response-ui/respond.html');
           return base;
         } catch (e) {
@@ -330,7 +332,26 @@
               String(d.outbox_count || 0) +
               '件。プレビュー: ' +
               String((d.links_preview || []).length || 0) +
-              '件。';
+              '件。' +
+              (d.mail_result
+                ? ' メール: 成功 ' +
+                  String(d.mail_result.sent || 0) +
+                  ' / 失敗 ' +
+                  String(d.mail_result.failed || 0) +
+                  ' / スキップ ' +
+                  String(d.mail_result.skipped || 0) +
+                  (d.mail_result.stopped_reason ? '（中止: ' + String(d.mail_result.stopped_reason) + '）' : '')
+                : '');
+            if (d.line_result) {
+              rSummary.textContent +=
+                ' LINE: 成功 ' +
+                String(d.line_result.sent || 0) +
+                ' / 失敗 ' +
+                String(d.line_result.failed || 0) +
+                ' / スキップ ' +
+                String(d.line_result.skipped || 0) +
+                (d.line_result.stopped_reason ? '（中止: ' + String(d.line_result.stopped_reason) + '）' : '');
+            }
             rLinks.value = lines.join('\n');
             showMsg('発信ログを保存し、配布用URLを生成しました。', 'ok');
           })

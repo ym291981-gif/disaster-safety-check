@@ -24,6 +24,8 @@ var SHEET_BROADCASTS = '発信ログ';
 var SHEET_OUTBOX = '配布キュー';
 /** 複数管理者で共有する「担当・対応チェック」 */
 var SHEET_ASSIGNMENTS = '対応アサイン';
+/** LINE Webhook 受信ログ（userId 取得・紐付け用） */
+var SHEET_LINE_WEBHOOK_LOG = 'LINE連携ログ';
 /**
  * true: トークンで1回送信すると「使用済み」になり再送信不可（本番向け）。
  * false: 検証しやすいよう何度でも送信できる（課題・動作確認向け）。
@@ -55,6 +57,23 @@ var OUTBOX_EMAIL_MAX_PER_DAY = 80;
 
 /** 連投でレート制限になりにくいよう、各送信のあとに空けるミリ秒（0 で無効） */
 var OUTBOX_EMAIL_SLEEP_MS = 400;
+
+/**
+ * true: 管理者の「発信（broadcast）」実行時に、そのままメール送信まで行う。
+ * false: 発信はキュー作成までに留め、手動実行やトリガーで送る。
+ */
+var BROADCAST_AUTO_SEND_EMAIL = true;
+
+/**
+ * true: 管理者の「発信（broadcast）」実行時に、そのままLINE送信まで行う。
+ */
+var BROADCAST_AUTO_SEND_LINE = false;
+
+/** 配布キューからのLINE一括送信: 1回の実行で処理する最大行数（queued のみ） */
+var OUTBOX_LINE_MAX_PER_RUN = 50;
+
+/** 連投でレート制限になりにくいよう、各送信のあとに空けるミリ秒（0 で無効） */
+var OUTBOX_LINE_SLEEP_MS = 500;
 
 /** README 準拠の status 値 */
 var STATUS_KEYS = ['safe', 'minor_injury', 'need_help', 'other'];
@@ -97,9 +116,16 @@ function jsonOutput_(obj) {
 /**
  * 回答の保存（フォーム POST または JSON POST）
  * フォームの name 例: session_id, employee_id, status, comment, response_channel
+ *
+ * LINE Messaging API の Webhook は JSON で events を送る。
+ * GAS の doPost では X-Line-Signature ヘッダーが取れないため、
+ * Webhook URL にクエリ ?line_webhook_secret=... を付け、スクリプトプロパティ LINE_WEBHOOK_SECRET と一致させて認証する。
  */
 function doPost(e) {
   try {
+    var lineOut = lineWebhookMaybeHandle_(e);
+    if (lineOut) return lineOut;
+
     var data = parsePostPayload_(e);
     /** 管理者: 発信（トークン発行＋ログ保存＋配布用URL生成） */
     if (String(data.action || '').trim() === 'broadcast') {
@@ -131,6 +157,170 @@ function parsePostPayload_(e) {
     }
   }
   return e.parameter || {};
+}
+
+/**
+ * LINE Webhook の POST なら処理して TextOutput を返す。それ以外は null。
+ *
+ * 【重要】LINE は Webhook に POST する。GAS の script.google.com/.../exec へ POST すると
+ * 先に 302 が返り、LINE の「検証」は失敗しやすい。302 の先（googleusercontent）へ POST すると 405 になる。
+ * 対策: Cloudflare Worker 等のプロキシが LINE に 200 を返しつつ GAS へ POST を転送する（line-webhook-proxy/worker.mjs）。
+ * runPrintLineWebhookUrlForLineConsole で GAS_TARGET_URL と手順を表示する。
+ */
+function lineWebhookMaybeHandle_(e) {
+  if (!e || !e.postData || !e.postData.contents) return null;
+  var raw = String(e.postData.contents || '');
+  if (!raw || raw.charAt(0) !== '{') return null;
+  var obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch (x) {
+    return null;
+  }
+  if (!obj || !Object.prototype.hasOwnProperty.call(obj, 'events') || Object.prototype.toString.call(obj.events) !== '[object Array]') {
+    return null;
+  }
+
+  var p = e.parameter || {};
+  var provided = String(p.line_webhook_secret || p.lineWebhookSecret || p.lw || '').trim();
+  var expected = String(PropertiesService.getScriptProperties().getProperty('LINE_WEBHOOK_SECRET') || '').trim();
+  if (!expected) {
+    Logger.log('LINE Webhook: LINE_WEBHOOK_SECRET が未設定のため無視しました');
+    return ContentService.createTextOutput('OK');
+  }
+  if (provided !== expected) {
+    Logger.log('LINE Webhook: line_webhook_secret が一致しません');
+    return ContentService.createTextOutput('OK');
+  }
+
+  var dest = String(obj.destination || '');
+  for (var i = 0; i < obj.events.length; i++) {
+    try {
+      handleLineWebhookEvent_(dest, obj.events[i]);
+    } catch (err) {
+      Logger.log('LINE Webhook event error: ' + String(err.message || err));
+    }
+  }
+  return ContentService.createTextOutput('OK');
+}
+
+/**
+ * エディタから実行: LINE Webhook 用の **GAS 転送先 URL** と、プロキシ（Worker）の手順を表示する。
+ *
+ * 以前案内した「googleusercontent の URL を LINE に貼る」方式は POST で 405 になるため使えません。
+ * Cloudflare Worker（line-webhook-proxy/worker.mjs）をデプロイし、Worker の URL を LINE の Webhook に貼ってください。
+ */
+function runPrintLineWebhookUrlForLineConsole() {
+  var props = PropertiesService.getScriptProperties();
+  var secret = String(props.getProperty('LINE_WEBHOOK_SECRET') || '').trim();
+  if (!secret) throw new Error('スクリプトのプロパティ LINE_WEBHOOK_SECRET を設定してください');
+
+  var execBase = String(props.getProperty('GAS_WEBAPP_EXEC_URL') || '').trim();
+  if (!execBase) {
+    throw new Error(
+      'スクリプトのプロパティ GAS_WEBAPP_EXEC_URL を設定してください（例: https://script.google.com/macros/s/.../exec）'
+    );
+  }
+  execBase = execBase.replace(/\?.*$/, '').replace(/\/$/, '');
+  if (execBase.indexOf('/exec') === -1) {
+    throw new Error('GAS_WEBAPP_EXEC_URL は .../exec で終わるウェブアプリの URL にしてください');
+  }
+
+  var gasTargetUrl = execBase + '?line_webhook_secret=' + encodeURIComponent(secret);
+
+  var lines = [];
+  lines.push('=== LINE Webhook と GAS（重要）===');
+  lines.push('');
+  lines.push('1) GAS の /exec に POST すると 302 になり、LINE の検証は失敗しやすいです。');
+  lines.push('2) 302 の先（googleusercontent）の URL に POST すると 405 になり、LINE からは使えません。');
+  lines.push('3) 対策: リポジトリの line-webhook-proxy/worker.mjs を Cloudflare Worker にデプロイしてください。');
+  lines.push('');
+  lines.push('--- Cloudflare Worker の環境変数「GAS_TARGET_URL」に設定する値（コピー用）---');
+  lines.push(gasTargetUrl);
+  lines.push('');
+  lines.push('--- LINE Developers の「Webhook URL」に貼る値 ---');
+  lines.push('Worker デプロイ後に表示される URL（例: https://line-gas-bridge.◯◯◯.workers.dev）');
+  lines.push('（上の GAS URL は貼らない。Worker の URL だけを貼る）');
+  lines.push('');
+  lines.push('GAS のコードを再デプロイしたら、必要に応じて GAS_TARGET_URL を更新してください。');
+
+  var text = lines.join('\n');
+  Logger.log(text);
+  /**
+   * getUi().alert は「OK を押すまで」処理が止まる。エディタ実行でダイアログが表示されない／背面に隠れる
+   * と 6 分でタイムアウトしやすい。全文は Logger、通知は非ブロッキングの toast のみにする。
+   */
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (ss) {
+      ss.toast('GAS_TARGET_URL など全文は「表示」→「ログ」でコピーできます。', 'LINE Webhook URL', 12);
+    }
+  } catch (e) {}
+}
+
+/**
+ * follow / message などを1行ログに残す。テキストが「社員番号のみ」なら社員マスターへ line_user_id を書く。
+ */
+function handleLineWebhookEvent_(destination, ev) {
+  if (!ev) return;
+  var type = String(ev.type || '').trim();
+  var src = ev.source || {};
+  var userId = String(src.userId || '').trim();
+  var msgText = '';
+  if (type === 'message' && ev.message && String(ev.message.type || '') === 'text') {
+    msgText = String(ev.message.text || '').trim();
+  }
+
+  var ss = getSpreadsheetForWebhook_();
+  var sh = getOrCreateSheet_(ss, SHEET_LINE_WEBHOOK_LOG, [
+    'received_at',
+    'event_type',
+    'line_user_id',
+    'message_text',
+    'destination',
+    'linked_employee_id',
+  ]);
+
+  var linked = '';
+  if (userId && msgText) {
+    var linkedId = tryLinkLineUserToEmployee_(ss, userId, msgText);
+    if (linkedId) linked = linkedId;
+  }
+
+  sh.appendRow([new Date(), type, userId, msgText, destination, linked]);
+}
+
+/**
+ * メッセージが「社員番号のみ」（数字 3〜10 桁）のとき、社員マスターの line_user_id を更新する。
+ * @returns {string} 紐付けた社員番号。紐付けなしは ''。
+ */
+function tryLinkLineUserToEmployee_(ss, lineUserId, messageText) {
+  var id = String(messageText || '').trim();
+  if (!/^[0-9]{3,10}$/.test(id)) return '';
+
+  var sh = getSheet_(ss, SHEET_EMPLOYEES);
+  var range = sh.getDataRange();
+  var values = range.getValues();
+  if (values.length < 2) return '';
+  var headers = values[0].map(function (h) {
+    return String(h).trim();
+  });
+  var cEmp = headerIndex_(headers, ['社員番号', 'employee_id', 'e_id']);
+  var cLine = headerIndex_(headers, ['line_user_id', 'LINE', 'lineUserId']);
+  if (cEmp < 0 || cLine < 0) return '';
+
+  var hitRow = -1;
+  for (var r = 1; r < values.length; r++) {
+    var eid = String(values[r][cEmp] || '').trim();
+    if (eid === id) {
+      if (hitRow > 0) return '';
+      hitRow = r + 1;
+    }
+  }
+  if (hitRow < 0) return '';
+
+  sh.getRange(hitRow, cLine + 1).setValue(lineUserId);
+  return id;
 }
 
 function headerIndex_(headers, candidates) {
@@ -678,6 +868,23 @@ function buildOfficeRates_(targets, respByEmp) {
     });
 }
 
+/**
+ * Webhook・ウェブアプリの doPost（発信 broadcast・配布キュー処理など）でブックを取得する。
+ * コンテナバインドでは通常 getActiveSpreadsheet で足りる。
+ * スタンドアロンでは null になり得るため、その場合はスクリプトプロパティ SPREADSHEET_ID にブック ID を設定する。
+ */
+function getSpreadsheetForWebhook_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss) return ss;
+  var id = String(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || '').trim();
+  if (!id) {
+    throw new Error(
+      'スプレッドシートを開けません。スクリプトがスプレッドシートにコンテナバインドされているか確認するか、スクリプトプロパティ SPREADSHEET_ID にブックの ID を設定してください'
+    );
+  }
+  return SpreadsheetApp.openById(id);
+}
+
 function getOrCreateSheet_(ss, name, headers) {
   var sh = ss.getSheetByName(name);
   if (sh) return sh;
@@ -686,13 +893,83 @@ function getOrCreateSheet_(ss, name, headers) {
   return sh;
 }
 
+function isHttpUrl_(s) {
+  var t = String(s || '').trim();
+  if (!t) return false;
+  return /^https?:\/\//i.test(t);
+}
+
+function getRequiredScriptProp_(key) {
+  var v = PropertiesService.getScriptProperties().getProperty(key);
+  v = String(v || '').trim();
+  if (!v) throw new Error('スクリプトのプロパティに ' + key + ' が設定されていません');
+  return v;
+}
+
+function lineGetToken_() {
+  return getRequiredScriptProp_('LINE_CHANNEL_ACCESS_TOKEN');
+}
+
+function lineApiFetch_(path, method, payloadObj) {
+  var url = 'https://api.line.me' + path;
+  var params = {
+    method: method || 'get',
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: 'Bearer ' + lineGetToken_(),
+    },
+  };
+  if (payloadObj !== undefined) {
+    params.contentType = 'application/json';
+    params.payload = JSON.stringify(payloadObj);
+  }
+  var res = UrlFetchApp.fetch(url, params);
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  var json = null;
+  try {
+    json = body ? JSON.parse(body) : null;
+  } catch (e) {
+    json = null;
+  }
+  if (code < 200 || code >= 300) {
+    throw new Error('LINE API ' + code + ': ' + (body || ''));
+  }
+  return json;
+}
+
+function lineGetQuotaRemaining_() {
+  /** 無料枠/上限超過を避けるため、上限と消費を取りに行く。 */
+  try {
+    var quota = lineApiFetch_('/v2/bot/message/quota', 'get');
+    var consumption = lineApiFetch_('/v2/bot/message/quota/consumption', 'get');
+    var limit = quota && quota.value !== undefined ? parseInt(String(quota.value), 10) : NaN;
+    var used = consumption && consumption.totalUsage !== undefined ? parseInt(String(consumption.totalUsage), 10) : NaN;
+    if (isNaN(limit) || isNaN(used)) return 0;
+    return Math.max(0, limit - used);
+  } catch (e) {
+    /**
+     * トークン不正・プランによって quota API が取れない場合、旧実装は 0 を返して「1通も送らない」になっていた。
+     * 実送信は Push の成否で分かるため、取得失敗時は打ち切らず試行する（無料枠超過は Push が 429 等になる）。
+     */
+    Logger.log('LINE quota API を取得できませんでした（送信は試行します）: ' + String(e.message || e));
+    return 999999;
+  }
+}
+
 function broadcast_(data) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getSpreadsheetForWebhook_();
   var sessionId = String(data.session_id || data.sessionId || '').trim();
   if (!sessionId) throw new Error('sessionId が必要です');
 
   /** 配布する回答フォームURL（respond.html のURL）。無いならログだけ残す。 */
   var respondBaseUrl = String(data.respond_base_url || data.respondBaseUrl || '').trim();
+  if (respondBaseUrl && !isHttpUrl_(respondBaseUrl)) {
+    throw new Error(
+      '回答フォーム URL（respond.html）は http(s) の公開URLにしてください。' +
+        ' file:/// やローカルパスは受信者が開けません（GitHub Pages などを使用してください）'
+    );
+  }
   var title = String(data.title || '').trim();
   var body = String(data.body || data.message || '').trim();
   var dueAtRaw = data.due_at || data.dueAt || data.回答期限 || data.response_due_at;
@@ -735,6 +1012,17 @@ function broadcast_(data) {
   /** 配布キューに全員分の「配布対象」を書き出す（送信処理は別実装） */
   var outboxCount = writeOutbox_(ss, sessionId, title, body, links);
 
+  var mailResult = null;
+  if (BROADCAST_AUTO_SEND_EMAIL) {
+    /** 無料枠・日次上限を超えそうなら内部で打ち切る。失敗行の自動再送はしない。 */
+    mailResult = processOutboxEmail_(sessionId);
+  }
+
+  var lineResult = null;
+  if (BROADCAST_AUTO_SEND_LINE) {
+    lineResult = processOutboxLine_(sessionId);
+  }
+
   /** 大量データを返しすぎない（UI側で必要ならCSV化などに拡張） */
   var preview = links.slice(0, 30);
   return {
@@ -743,10 +1031,12 @@ function broadcast_(data) {
     session_id: sessionId,
     issued_count: issued.length,
     outbox_count: outboxCount,
+    mail_result: mailResult,
+    line_result: lineResult,
     respond_base_url: respondBaseUrl,
     links_preview: preview,
     note:
-      'このAPIは「セッション作成/更新 → トークン再発行 → 配布キュー作成 → 発信ログ記録 → 配布用URL生成」までを行います。実際のLINE/メール送信は未実装のため、配布キューや links_preview を元に配布してください。',
+      'このAPIは「セッション作成/更新 → トークン再発行 → 配布キュー作成 → 発信ログ記録 → 配布用URL生成」までを行います。BROADCAST_AUTO_SEND_EMAIL=true の場合は、続けてメール送信も行います（無料枠/上限で途中停止することがあります）。',
   };
 }
 
@@ -1031,7 +1321,13 @@ function processOutboxEmail_(sessionIdStr) {
     var row = values[r];
     if (String(row[cSid] || '').trim() !== sessionIdStr) continue;
     var st = String(row[cStatus] || '').trim().toLowerCase();
-    if (st !== 'queued') continue;
+    /**
+     * 先にメール送信が走ると status が email_sent / email_skipped_* になり queued ではなくなる。
+     * その場合も LINE は送れるので、email_* も対象に含める。
+     * 既に line_* になっている行は二重送信を避けるため対象外にする。
+     */
+    if (st.indexOf('line_') === 0) continue;
+    if (!(st === 'queued' || st.indexOf('email_') === 0)) continue;
 
     processed++;
 
@@ -1106,6 +1402,168 @@ function isPlausibleEmail_(s) {
 }
 
 /**
+ * 既存の「配布キュー」に line_error / line_sent_at 列が無い場合だけ 1 行目に追加する。
+ */
+function ensureOutboxLineMetaColumns_(sh) {
+  var lastCol = Math.max(sh.getLastColumn(), 1);
+  var headers = sh.getRange(1, 1, 1, lastCol)
+    .getValues()[0]
+    .map(function (h) {
+      return String(h).trim();
+    });
+  var cErr = headerIndex_(headers, ['line_error', 'LINE送信エラー']);
+  var cAt = headerIndex_(headers, ['line_sent_at', 'LINE送信日時']);
+  var appendAt = lastCol;
+  if (cErr < 0) {
+    appendAt++;
+    sh.getRange(1, appendAt).setValue('line_error');
+    headers.push('line_error');
+    cErr = headers.length - 1;
+  }
+  if (cAt < 0) {
+    appendAt++;
+    sh.getRange(1, appendAt).setValue('line_sent_at');
+  }
+}
+
+function buildLineMessageText_(subj, bodyText, url) {
+  var parts = [];
+  if (subj) parts.push(String(subj).trim());
+  if (bodyText) parts.push(String(bodyText).trim());
+  if (url) parts.push(String(url).trim());
+  var text = parts.filter(Boolean).join('\n\n');
+  /** LINE の text 上限に収める（厳密ではないが安全側） */
+  var maxLen = 4500;
+  if (text.length > maxLen) text = text.slice(0, maxLen - 1) + '…';
+  return text;
+}
+
+/**
+ * 指定セッションの配布キュー（status が queued）に対し、LINE へ push 送信する。
+ * OUTBOX_SEND_ONLY_WITHIN_FREE_TIER が true のとき、quota の残量が足りない場合は送らず打ち切る（安全側）。
+ *
+ * 前提: スクリプトのプロパティに LINE_CHANNEL_ACCESS_TOKEN を設定していること。
+ *
+ * @param {string} sessionIdStr セッション ID
+ * @returns {{ ok: boolean, sent: number, failed: number, skipped: number, stopped_reason?: string, errors?: string[], quota_remaining?: number }}
+ */
+function processOutboxLine_(sessionIdStr) {
+  sessionIdStr = String(sessionIdStr || '').trim();
+  if (!sessionIdStr) throw new Error('sessionId が空です');
+
+  var ss = getSpreadsheetForWebhook_();
+  var sh = ss.getSheetByName(SHEET_OUTBOX);
+  if (!sh) throw new Error('シートがありません: ' + SHEET_OUTBOX);
+
+  ensureOutboxLineMetaColumns_(sh);
+
+  var range = sh.getDataRange();
+  var values = range.getValues();
+  if (values.length < 2) return { ok: true, sent: 0, failed: 0, skipped: 0, stopped_reason: 'no_rows', quota_remaining: 0 };
+
+  var headers = values[0].map(function (h) {
+    return String(h).trim();
+  });
+  var cSid = headerIndex_(headers, ['session_id', 'セッションID', 'session_ID', 'sessionId']);
+  var cLine = headerIndex_(headers, ['line_user_id', 'LINE', 'lineUserId']);
+  var cTitle = headerIndex_(headers, ['title', '件名']);
+  var cBody = headerIndex_(headers, ['body', '本文']);
+  var cUrl = headerIndex_(headers, ['respond_url', '回答URL']);
+  var cStatus = headerIndex_(headers, ['status', '状態']);
+  var cErr = headerIndex_(headers, ['line_error', 'LINE送信エラー']);
+  var cAt = headerIndex_(headers, ['line_sent_at', 'LINE送信日時']);
+  if (cSid < 0 || cLine < 0 || cUrl < 0 || cStatus < 0) throw new Error('配布キューに必要な列がありません（session_id / line_user_id / respond_url / status）');
+
+  var remaining = OUTBOX_SEND_ONLY_WITHIN_FREE_TIER ? lineGetQuotaRemaining_() : 9999999;
+  var sent = 0;
+  var failed = 0;
+  var skipped = 0;
+  var errors = [];
+  var processed = 0;
+  var stoppedReason = '';
+
+  for (var r = 1; r < values.length; r++) {
+    if (processed >= OUTBOX_LINE_MAX_PER_RUN) {
+      stoppedReason = 'max_per_run';
+      break;
+    }
+    var row = values[r];
+    if (String(row[cSid] || '').trim() !== sessionIdStr) continue;
+    var st = String(row[cStatus] || '').trim().toLowerCase();
+    /**
+     * broadcast_ は writeOutbox_ のあと processOutboxEmail_ を先に実行することがある。
+     * メール送信後は status が email_* になり、この時点では queued ではないため、旧実装だと LINE が1通も送られない。
+     * メール側と同様に queued と email_* を対象にし、既に line_* の行は二重送信しない。
+     */
+    if (st.indexOf('line_') === 0) continue;
+    if (!(st === 'queued' || st.indexOf('email_') === 0)) continue;
+
+    processed++;
+
+    if (OUTBOX_SEND_ONLY_WITHIN_FREE_TIER && remaining <= 0) {
+      stoppedReason = 'line_quota_exhausted';
+      errors.push('LINE の送信枠（quota）が不足しているため中止しました');
+      break;
+    }
+
+    var to = String(row[cLine] || '').trim();
+    var url = String(row[cUrl] || '').trim();
+    var subj = cTitle >= 0 ? String(row[cTitle] || '').trim() : '';
+    var bodyText = cBody >= 0 ? String(row[cBody] || '').trim() : '';
+    if (!subj) subj = '【安否確認】回答のお願い';
+
+    if (!to) {
+      skipped++;
+      sh.getRange(r + 1, cStatus + 1).setValue('line_skipped_no_userid');
+      if (cErr >= 0) sh.getRange(r + 1, cErr + 1).setValue('LINE の宛先（line_user_id）が空です');
+      continue;
+    }
+    if (!url || !isHttpUrl_(url)) {
+      skipped++;
+      sh.getRange(r + 1, cStatus + 1).setValue('line_skipped_no_url');
+      if (cErr >= 0) sh.getRange(r + 1, cErr + 1).setValue('回答URL（respond_url）が空、または http(s) ではありません');
+      continue;
+    }
+
+    var text = buildLineMessageText_(subj, bodyText, url);
+
+    try {
+      lineApiFetch_('/v2/bot/message/push', 'post', {
+        to: to,
+        messages: [{ type: 'text', text: text }],
+      });
+      sh.getRange(r + 1, cStatus + 1).setValue('line_sent');
+      if (cErr >= 0) sh.getRange(r + 1, cErr + 1).setValue('');
+      if (cAt >= 0) sh.getRange(r + 1, cAt + 1).setValue(new Date());
+      sent++;
+      remaining--;
+      if (OUTBOX_LINE_SLEEP_MS > 0) Utilities.sleep(OUTBOX_LINE_SLEEP_MS);
+    } catch (err) {
+      failed++;
+      var msg = String(err.message || err);
+      sh.getRange(r + 1, cStatus + 1).setValue('line_failed');
+      if (cErr >= 0) sh.getRange(r + 1, cErr + 1).setValue(msg);
+      errors.push('行 ' + (r + 1) + ': ' + msg);
+      /** quota 系のエラーっぽい場合は、安全側で停止 */
+      if (OUTBOX_SEND_ONLY_WITHIN_FREE_TIER && (/LINE API 429/.test(msg) || /quota/i.test(msg))) {
+        stoppedReason = 'line_quota_error';
+        break;
+      }
+    }
+  }
+
+  return {
+    ok: failed === 0,
+    sent: sent,
+    failed: failed,
+    skipped: skipped,
+    stopped_reason: stoppedReason || undefined,
+    errors: errors.length ? errors : undefined,
+    quota_remaining: OUTBOX_SEND_ONLY_WITHIN_FREE_TIER ? remaining : undefined,
+  };
+}
+
+/**
  * エディタから実行: 下の SESSION_ID_FOR_OUTBOX_EMAIL を実際の ID に書き換えてから ▶ 実行。
  * 初回は「権限を確認」でメール送信の承認が必要です。
  */
@@ -1128,6 +1586,30 @@ function runProcessOutboxEmailFromEditor() {
   } catch (uiErr) {
     /** スプレッドシートを開かずエディタだけ実行した場合などはログのみ */
   }
+}
+
+/**
+ * エディタから実行: 下の SESSION_ID を実際のセッション ID に書き換えてから ▶ 実行。
+ * BROADCAST_AUTO_SEND_LINE を変えずに、配布キュー queued / email_* 行への LINE 送信だけやり直したいとき用。
+ */
+function runProcessOutboxLineFromEditor() {
+  var SESSION_ID_FOR_OUTBOX_LINE = '202605';
+  var out = processOutboxLine_(SESSION_ID_FOR_OUTBOX_LINE);
+  Logger.log(JSON.stringify(out, null, 2));
+  var summary =
+    'LINE送信結果\n成功: ' +
+    out.sent +
+    ' / 失敗: ' +
+    out.failed +
+    ' / スキップ: ' +
+    out.skipped +
+    (out.stopped_reason ? '\n中止理由: ' + out.stopped_reason : '') +
+    (out.errors ? '\n' + out.errors.join('\n') : '');
+  Logger.log(summary);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (ss) ss.toast(String(summary).slice(0, 250), 'LINE 配布キュー', 15);
+  } catch (e) {}
 }
 
 function buildDefaultOwnerMap_(targets) {
